@@ -1,0 +1,29 @@
+# Ignore everything by default
+*
+
+# Explicitly whitelist what we need
+!pyproject.toml
+!uv.lock
+!.python-version
+!src/
+!src/**
+!config/
+!config/**
+
+# Ensure we don't include unnecessary items in whitelisted directories
+**/__pycache__/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.DS_Store
+**/.git/
+**/.vscode/
+**/.idea/
+
+# Exclude large/sensitive directories even if they're inside whitelisted paths
+**/data/
+**/logs/
+**/credentials/
+**/notebooks/
