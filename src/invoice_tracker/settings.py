@@ -70,7 +70,7 @@ class Settings(BaseSettings):
         description="Ollama API base URL",
     )
     ollama_model: str = Field(
-        default="qwen3-vl:8b",
+        default="ministral-3:14b",
         description="Vision model for invoice extraction",
     )
     ollama_timeout: int = Field(
