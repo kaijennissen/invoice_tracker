@@ -9,6 +9,7 @@ import pytest
 
 from invoice_tracker.extractor import (
     EXTRACTION_PROMPT,
+    _get_extraction_schema,
     check_ollama_connection,
     extract_invoice,
 )
@@ -202,15 +203,16 @@ class TestExtractInvoice:
             mock_client.return_value.chat.assert_called_once()
             call_kwargs = mock_client.return_value.chat.call_args.kwargs
             assert call_kwargs["model"] == mock_settings.ollama_model
-            assert call_kwargs["format"] == InvoiceData.model_json_schema()
+            assert call_kwargs["format"] == _get_extraction_schema()
             assert call_kwargs["options"] == {"temperature": 0}
 
 
-class TestExtractionPrompt:
-    """Tests for extraction prompt constant."""
+class TestExtractionSchema:
+    """Tests for extraction schema generation."""
 
-    def test_prompt_contains_required_fields(self) -> None:
-        """EXTRACTION_PROMPT should mention all required fields."""
+    def test_schema_contains_required_fields(self) -> None:
+        """Extraction schema should contain all required fields."""
+        schema = _get_extraction_schema()
         required_fields = [
             "party",
             "invoice_id",
@@ -221,5 +223,19 @@ class TestExtractionPrompt:
             "recipient",
         ]
 
+        assert "properties" in schema
         for field in required_fields:
-            assert field in EXTRACTION_PROMPT
+            assert field in schema["properties"]
+
+    def test_schema_has_no_anyof(self) -> None:
+        """Extraction schema should not contain anyOf patterns."""
+        schema = _get_extraction_schema()
+
+        for prop_schema in schema["properties"].values():
+            assert "anyOf" not in prop_schema
+
+    def test_amount_is_number_type(self) -> None:
+        """Amount field should be simplified to number type."""
+        schema = _get_extraction_schema()
+
+        assert schema["properties"]["amount"]["type"] == "number"

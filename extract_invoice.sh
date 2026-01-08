@@ -3,19 +3,22 @@
 
 MODEL="ministral-3:14b"
 
-PROMPT_VAR='Extract invoice data from this image. Be precise with:
-- Dates: use ISO format YYYY-MM-DD
-- Amounts: numeric value only (no currency symbols)
-- If a field cannot be determined, use "UNKNOWN" for text fields.
+PROMPT_VAR='Extract invoice data from this image. Be precise with dates (YYYY-MM-DD) and amounts (numeric only).'
 
-Return JSON with these fields:
-- party: Name of the invoicing party/company
-- invoice_id: Unique invoice identifier
-- issue_date: Date the invoice was issued (YYYY-MM-DD)
-- due_date: Payment due date (YYYY-MM-DD)
-- amount: Total amount to pay (numeric only)
-- currency: Currency code (default EUR if not specified)
-- recipient: Person/entity the invoice is addressed to'
+# JSON schema for structured output (simplified - no anyOf patterns)
+SCHEMA='{
+    "type": "object",
+    "properties": {
+        "party": {"type": "string", "description": "Name of the invoicing party/company"},
+        "invoice_id": {"type": "string", "description": "Unique invoice identifier"},
+        "issue_date": {"type": "string", "format": "date", "description": "Date issued (YYYY-MM-DD)"},
+        "due_date": {"type": "string", "format": "date", "description": "Payment due date (YYYY-MM-DD)"},
+        "amount": {"type": "number", "description": "Total amount to pay"},
+        "currency": {"type": "string", "description": "Currency code (EUR, USD, etc.)"},
+        "recipient": {"type": "string", "description": "Person/entity being billed"}
+    },
+    "required": ["party", "invoice_id", "issue_date", "due_date", "amount", "currency", "recipient"]
+}'
 
 # Check for argument
 if [ -z "$1" ]; then
@@ -39,6 +42,7 @@ JSON_PAYLOAD=$(jq -n \
     --arg model "$MODEL" \
     --arg prompt "$PROMPT_VAR" \
     --arg img "$IMG" \
+    --argjson schema "$SCHEMA" \
     '{
         model: $model,
         messages: [{
@@ -47,7 +51,7 @@ JSON_PAYLOAD=$(jq -n \
             images: [$img]
         }],
         stream: false,
-        format: "json"
+        format: $schema
     }')
 
 # Call Ollama API and extract formatted JSON result
