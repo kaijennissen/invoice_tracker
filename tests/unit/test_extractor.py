@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from invoice_tracker.extractor import (
-    EXTRACTION_PROMPT,
     _get_extraction_schema,
     check_ollama_connection,
     extract_invoice,

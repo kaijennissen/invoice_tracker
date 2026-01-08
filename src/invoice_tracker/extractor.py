@@ -45,7 +45,7 @@ def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
     schema.pop("title", None)
 
     if "properties" in schema:
-        for prop_name, prop_schema in schema["properties"].items():
+        for _prop_name, prop_schema in schema["properties"].items():
             # Remove title from each property
             prop_schema.pop("title", None)
 
