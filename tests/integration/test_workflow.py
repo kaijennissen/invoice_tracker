@@ -83,9 +83,7 @@ class TestFullWorkflow:
             ),
         ]
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             mock_extract.side_effect = mock_invoices
 
             results = process_batch(integration_settings)
@@ -117,9 +115,7 @@ class TestFullWorkflow:
         """Failed extractions should move files to failed directory."""
         (integration_settings.incoming_dir / "bad_invoice.png").touch()
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             from invoice_tracker.settings import ExtractionError
 
             mock_extract.side_effect = ExtractionError("Invalid image")
@@ -151,9 +147,7 @@ class TestFullWorkflow:
             recipient="Test User",
         )
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             mock_extract.return_value = mock_invoice
 
             results = process_batch(integration_settings)

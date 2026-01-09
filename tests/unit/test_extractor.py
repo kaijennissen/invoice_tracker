@@ -51,9 +51,7 @@ def sample_invoice_json() -> str:
 class TestCheckOllamaConnection:
     """Tests for check_ollama_connection function."""
 
-    def test_returns_true_when_model_available(
-        self, mock_settings: Settings
-    ) -> None:
+    def test_returns_true_when_model_available(self, mock_settings: Settings) -> None:
         """check_ollama_connection returns True when model is available."""
         mock_model = MagicMock()
         mock_model.model = mock_settings.ollama_model
@@ -83,9 +81,7 @@ class TestCheckOllamaConnection:
 
             assert result is False
 
-    def test_returns_false_on_connection_error(
-        self, mock_settings: Settings
-    ) -> None:
+    def test_returns_false_on_connection_error(self, mock_settings: Settings) -> None:
         """check_ollama_connection returns False on connection error."""
         with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
             mock_client.return_value.list.side_effect = Exception("Connection failed")
@@ -203,7 +199,9 @@ class TestExtractInvoice:
             mock_client.return_value.chat.assert_called_once()
             call_kwargs = mock_client.return_value.chat.call_args.kwargs
             assert call_kwargs["model"] == mock_settings.ollama_model
-            assert call_kwargs["format"] == _simplify_schema(InvoiceData.model_json_schema())
+            assert call_kwargs["format"] == _simplify_schema(
+                InvoiceData.model_json_schema()
+            )
             assert call_kwargs["options"] == {"temperature": 0}
 
 

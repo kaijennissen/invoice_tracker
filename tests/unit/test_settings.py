@@ -65,9 +65,7 @@ class TestInvoiceData:
 class TestInvoiceRecord:
     """Tests for InvoiceRecord model."""
 
-    def test_create_from_invoice_data(
-        self, sample_invoice_data: InvoiceData
-    ) -> None:
+    def test_create_from_invoice_data(self, sample_invoice_data: InvoiceData) -> None:
         """InvoiceRecord should be created from InvoiceData with metadata."""
         record = InvoiceRecord(
             **sample_invoice_data.model_dump(),

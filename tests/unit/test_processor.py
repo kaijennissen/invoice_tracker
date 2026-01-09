@@ -58,9 +58,7 @@ def processor_settings(tmp_path: Path) -> Settings:
 class TestScanIncoming:
     """Tests for scan_incoming function."""
 
-    def test_returns_empty_list_for_missing_directory(
-        self, tmp_path: Path
-    ) -> None:
+    def test_returns_empty_list_for_missing_directory(self, tmp_path: Path) -> None:
         """scan_incoming returns empty list if directory doesn't exist."""
         settings = Settings(
             _cli_parse_args=False,
@@ -198,9 +196,7 @@ class TestProcessSingle:
         invoice_file = processor_settings.incoming_dir / "test.png"
         invoice_file.touch()
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             mock_extract.return_value = sample_invoice_data
 
             result = process_single(invoice_file, processor_settings)
@@ -208,9 +204,7 @@ class TestProcessSingle:
             assert result.success is True
             assert result.data == sample_invoice_data
             assert not invoice_file.exists()  # Moved
-            assert (
-                processor_settings.processed_dir / "test.png"
-            ).exists()
+            assert (processor_settings.processed_dir / "test.png").exists()
 
     def test_extraction_failure_moves_to_failed(
         self, processor_settings: Settings
@@ -219,9 +213,7 @@ class TestProcessSingle:
         invoice_file = processor_settings.incoming_dir / "test.png"
         invoice_file.touch()
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             mock_extract.side_effect = ExtractionError("Test error")
 
             result = process_single(invoice_file, processor_settings)
@@ -239,9 +231,7 @@ class TestProcessSingle:
         invoice_file = processor_settings.incoming_dir / "test.png"
         invoice_file.touch()
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             mock_extract.return_value = sample_invoice_data
 
             result = process_single(invoice_file, processor_settings)
@@ -283,9 +273,7 @@ class TestProcessBatch:
         (processor_settings.incoming_dir / "invoice1.png").touch()
         (processor_settings.incoming_dir / "invoice2.png").touch()
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             # Return different invoice IDs to avoid duplicates
             mock_extract.side_effect = [
                 InvoiceData(
@@ -328,9 +316,7 @@ class TestProcessBatch:
         (processor_settings.incoming_dir / "bad.png").touch()
         (processor_settings.incoming_dir / "good.png").touch()
 
-        with patch(
-            "invoice_tracker.processor.extract_invoice"
-        ) as mock_extract:
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
             mock_extract.side_effect = [
                 ExtractionError("Failed"),
                 sample_invoice_data,

@@ -56,9 +56,7 @@ def main() -> int:
     log = structlog.get_logger()
 
     try:
-        log.debug(
-            "settings_loaded", dry_run=settings.dry_run, verbose=settings.verbose
-        )
+        log.debug("settings_loaded", dry_run=settings.dry_run, verbose=settings.verbose)
 
         # Check Ollama connection
         if not settings.dry_run:

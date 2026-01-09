@@ -57,5 +57,4 @@ JSON_PAYLOAD=$(jq -n \
 # Call Ollama API and extract formatted JSON result
 curl -s -X POST http://localhost:11434/api/chat \
     -H "Content-Type: application/json" \
-    -d "$JSON_PAYLOAD" | jq -r '.message.content' | jq . 
-
+    -d "$JSON_PAYLOAD" | jq -r '.message.content' | jq .

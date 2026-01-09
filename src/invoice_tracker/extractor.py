@@ -115,7 +115,9 @@ def check_ollama_connection(settings: Settings) -> bool:
         True if Ollama is reachable and model is available, False otherwise.
     """
     try:
-        client = ollama.Client(host=settings.ollama_url, timeout=settings.ollama_timeout)
+        client = ollama.Client(
+            host=settings.ollama_url, timeout=settings.ollama_timeout
+        )
         models = client.list()
         model_names = [m.model for m in models.models]
         return settings.ollama_model in model_names
