@@ -121,7 +121,7 @@ class Settings(BaseSettings):
         description="Override the backend's default URL (advanced)",
     )
     ollama_model: str = Field(
-        default="ministral-3:14b",
+        default="gemma3:27b",
         description="Vision model for invoice extraction",
     )
     ollama_timeout: int = Field(
