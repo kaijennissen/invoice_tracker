@@ -1,7 +1,6 @@
 """Tests for invoice_tracker.extractor module."""
 
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -9,7 +8,6 @@ import pytest
 
 from invoice_tracker.extractor import (
     _create_client,
-    _simplify_schema,
     check_ollama_connection,
     extract_invoice,
     pdf_to_images,
@@ -161,7 +159,7 @@ class TestExtractInvoice:
             assert result.party == "Test Corp"
             assert result.invoice_id == "INV-2024-001"
             assert result.issue_date == date(2024, 1, 15)
-            assert result.amount == Decimal("1234.56")
+            assert result.amount == 1234.56
 
     def test_raises_file_not_found_for_missing_image(
         self, mock_settings: Settings, tmp_path: Path
@@ -246,45 +244,8 @@ class TestExtractInvoice:
             mock_client.return_value.chat.assert_called_once()
             call_kwargs = mock_client.return_value.chat.call_args.kwargs
             assert call_kwargs["model"] == mock_settings.ollama_model
-            assert call_kwargs["format"] == _simplify_schema(
-                InvoiceData.model_json_schema()
-            )
+            assert call_kwargs["format"] == InvoiceData.model_json_schema()
             assert call_kwargs["options"] == {"temperature": 0}
-
-
-class TestExtractionSchema:
-    """Tests for extraction schema generation."""
-
-    def test_schema_contains_required_fields(self) -> None:
-        """Extraction schema should contain all required fields."""
-        schema = _simplify_schema(InvoiceData.model_json_schema())
-        required_fields = [
-            "party",
-            "invoice_id",
-            "issue_date",
-            "due_date",
-            "amount",
-            "currency",
-            "recipient",
-        ]
-
-        assert "properties" in schema
-        for field in required_fields:
-            assert field in schema["properties"]
-
-    def test_schema_has_no_anyof(self) -> None:
-        """Extraction schema should not contain anyOf patterns."""
-        schema = _simplify_schema(InvoiceData.model_json_schema())
-
-        for prop_schema in schema["properties"].values():
-            assert "anyOf" not in prop_schema
-
-    def test_amount_is_number_type(self) -> None:
-        """Amount field should be simplified to number type."""
-        schema = _simplify_schema(InvoiceData.model_json_schema())
-
-        assert schema["properties"]["amount"]["type"] == "number"
-
 
 class TestPdfToImages:
     """Tests for pdf_to_images function."""

@@ -5,7 +5,6 @@ They are marked with @pytest.mark.integration and may be slower than unit tests.
 """
 
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -68,7 +67,7 @@ class TestFullWorkflow:
                 invoice_id="INV-2024-001",
                 issue_date=date(2024, 1, 15),
                 due_date=date(2024, 2, 15),
-                amount=Decimal("1000.00"),
+                amount=1000.00,
                 currency="EUR",
                 recipient="John Doe",
             ),
@@ -77,7 +76,7 @@ class TestFullWorkflow:
                 invoice_id="INV-2024-002",
                 issue_date=date(2024, 1, 20),
                 due_date=date(2024, 2, 20),
-                amount=Decimal("2500.50"),
+                amount=2500.50,
                 currency="USD",
                 recipient="Jane Smith",
             ),
@@ -142,7 +141,7 @@ class TestFullWorkflow:
             invoice_id="INV-TEST-001",
             issue_date=date(2024, 1, 1),
             due_date=date(2024, 2, 1),
-            amount=Decimal("500.00"),
+            amount=500.00,
             currency="EUR",
             recipient="Test User",
         )

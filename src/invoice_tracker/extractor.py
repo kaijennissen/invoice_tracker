@@ -5,10 +5,8 @@ and PDFs using Ollama's vision capabilities. It is part of the core logic layer
 and handles communication with the Ollama API.
 """
 
-import copy
 import time
 from pathlib import Path
-from typing import Any
 
 import fitz
 import ollama
@@ -54,47 +52,6 @@ def _create_client(settings: Settings) -> ollama.Client:
         timeout=settings.ollama_timeout,
         headers=headers,
     )
-
-
-def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """Simplify a JSON schema for Ollama compatibility.
-
-    Ollama crashes when processing images with schemas containing anyOf patterns
-    (like those Pydantic generates for Decimal fields). This function simplifies
-    such schemas by replacing anyOf with the first compatible simple type.
-
-    Parameters
-    ----------
-    schema : dict[str, Any]
-        The original JSON schema from Pydantic.
-
-    Returns
-    -------
-    dict[str, Any]
-        A simplified schema without anyOf patterns.
-    """
-    schema = copy.deepcopy(schema)
-
-    # Remove description at top level (not needed for constrained decoding)
-    schema.pop("description", None)
-    schema.pop("title", None)
-
-    if "properties" in schema:
-        for _prop_name, prop_schema in schema["properties"].items():
-            # Remove title from each property
-            prop_schema.pop("title", None)
-
-            # Simplify anyOf to first type (usually number for Decimal)
-            if "anyOf" in prop_schema:
-                for option in prop_schema["anyOf"]:
-                    if option.get("type") in ("number", "integer", "string"):
-                        prop_schema["type"] = option["type"]
-                        if "format" in option:
-                            prop_schema["format"] = option["format"]
-                        break
-                del prop_schema["anyOf"]
-
-    return schema
 
 
 def pdf_to_images(pdf_path: Path) -> list[bytes]:
@@ -212,7 +169,7 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
                         "images": images,
                     }
                 ],
-                format=_simplify_schema(InvoiceData.model_json_schema()),
+                format=InvoiceData.model_json_schema(),
                 options={"temperature": 0},
             )
 
