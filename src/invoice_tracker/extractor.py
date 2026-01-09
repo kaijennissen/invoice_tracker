@@ -1,8 +1,8 @@
 """Invoice data extraction using Ollama vision models.
 
 This module provides functions to extract structured invoice data from images
-using Ollama's vision capabilities. It is part of the core logic layer and
-handles communication with the Ollama API.
+and PDFs using Ollama's vision capabilities. It is part of the core logic layer
+and handles communication with the Ollama API.
 """
 
 import copy
@@ -10,6 +10,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+import fitz
 import ollama
 
 from invoice_tracker.settings import ExtractionError, InvoiceData, Settings
@@ -18,7 +19,7 @@ from invoice_tracker.settings import ExtractionError, InvoiceData, Settings
 MAX_RETRIES = 2
 INITIAL_BACKOFF_SECONDS = 1.0
 
-EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols)."""
+EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page."""
 
 
 def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -62,15 +63,42 @@ def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-def _get_extraction_schema() -> dict[str, Any]:
-    """Get the simplified JSON schema for invoice extraction.
+def pdf_to_images(pdf_path: Path) -> list[bytes]:
+    """Convert PDF pages to in-memory PNG images.
+
+    Converts each page of a PDF document to a PNG image at 2x scale
+    for better quality when processing with vision models.
+
+    Parameters
+    ----------
+    pdf_path : Path
+        Path to the PDF file.
 
     Returns
     -------
-    dict[str, Any]
-        Simplified JSON schema compatible with Ollama vision models.
+    list[bytes]
+        List of PNG images as raw bytes (one per page).
+
+    Raises
+    ------
+    FileNotFoundError
+        If the PDF file doesn't exist.
     """
-    return _simplify_schema(InvoiceData.model_json_schema())
+    if not pdf_path.exists():
+        raise FileNotFoundError(f"PDF file not found: {pdf_path}")
+
+    doc = fitz.open(pdf_path)
+    images: list[bytes] = []
+
+    try:
+        for page_num in range(len(doc)):
+            page = doc[page_num]
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for quality
+            images.append(pix.tobytes("png"))
+    finally:
+        doc.close()
+
+    return images
 
 
 def check_ollama_connection(settings: Settings) -> bool:
@@ -95,16 +123,17 @@ def check_ollama_connection(settings: Settings) -> bool:
         return False
 
 
-def extract_invoice(image_path: Path, settings: Settings) -> InvoiceData:
-    """Extract invoice data from an image using Ollama vision model.
+def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
+    """Extract invoice data from an image or PDF using Ollama vision model.
 
-    Uses the configured Ollama model to analyze the invoice image and
-    extract structured data. Implements retry logic with exponential backoff.
+    Uses the configured Ollama model to analyze the invoice image or PDF and
+    extract structured data. For PDFs, all pages are converted to images and
+    passed together. Implements retry logic with exponential backoff.
 
     Parameters
     ----------
-    image_path : Path
-        Path to the invoice image file.
+    file_path : Path
+        Path to the invoice image or PDF file.
     settings : Settings
         Application settings containing Ollama configuration.
 
@@ -118,10 +147,16 @@ def extract_invoice(image_path: Path, settings: Settings) -> InvoiceData:
     ExtractionError
         If extraction fails after all retries or validation fails.
     FileNotFoundError
-        If the image file doesn't exist.
+        If the file doesn't exist.
     """
-    if not image_path.exists():
-        raise FileNotFoundError(f"Image file not found: {image_path}")
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Convert file to image bytes
+    if file_path.suffix.lower() == ".pdf":
+        images = pdf_to_images(file_path)
+    else:
+        images = [file_path.read_bytes()]
 
     client = ollama.Client(host=settings.ollama_url, timeout=settings.ollama_timeout)
     last_error: Exception | None = None
@@ -134,10 +169,10 @@ def extract_invoice(image_path: Path, settings: Settings) -> InvoiceData:
                     {
                         "role": "user",
                         "content": EXTRACTION_PROMPT,
-                        "images": [str(image_path)],
+                        "images": images,
                     }
                 ],
-                format=_get_extraction_schema(),
+                format=_simplify_schema(InvoiceData.model_json_schema()),
                 options={"temperature": 0},
             )
 
@@ -159,5 +194,6 @@ def extract_invoice(image_path: Path, settings: Settings) -> InvoiceData:
 __all__ = [
     "check_ollama_connection",
     "extract_invoice",
+    "pdf_to_images",
     "EXTRACTION_PROMPT",
 ]

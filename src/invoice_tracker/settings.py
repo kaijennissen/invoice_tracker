@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
     # Processing settings
     supported_extensions: list[str] = Field(
-        default_factory=lambda: [".png", ".jpg", ".jpeg"],
+        default_factory=lambda: [".png", ".jpg", ".jpeg", ".pdf"],
         description="Supported image file extensions",
     )
 

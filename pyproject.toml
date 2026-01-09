@@ -28,6 +28,7 @@ dependencies = [
     "pydantic-settings>=2.0",
     "openpyxl",
     "ollama",
+    "pymupdf",
 ]
 
 [project.scripts]

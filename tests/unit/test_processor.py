@@ -85,16 +85,18 @@ class TestScanIncoming:
         (processor_settings.incoming_dir / "invoice1.png").touch()
         (processor_settings.incoming_dir / "invoice2.jpg").touch()
         (processor_settings.incoming_dir / "invoice3.jpeg").touch()
-        (processor_settings.incoming_dir / "document.pdf").touch()  # unsupported
+        (processor_settings.incoming_dir / "invoice4.pdf").touch()
+        (processor_settings.incoming_dir / "document.txt").touch()  # unsupported
 
         result = scan_incoming(processor_settings)
 
-        assert len(result) == 3
+        assert len(result) == 4
         names = {f.name for f in result}
         assert "invoice1.png" in names
         assert "invoice2.jpg" in names
         assert "invoice3.jpeg" in names
-        assert "document.pdf" not in names
+        assert "invoice4.pdf" in names
+        assert "document.txt" not in names
 
     def test_finds_uppercase_extensions(self, processor_settings: Settings) -> None:
         """scan_incoming finds files with uppercase extensions."""
