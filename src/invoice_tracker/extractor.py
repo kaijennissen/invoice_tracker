@@ -13,13 +13,47 @@ from typing import Any
 import fitz
 import ollama
 
-from invoice_tracker.settings import ExtractionError, InvoiceData, Settings
+from invoice_tracker.settings import (
+    ExtractionError,
+    InvoiceData,
+    OllamaBackend,
+    Settings,
+)
 
 # Retry settings
 MAX_RETRIES = 2
 INITIAL_BACKOFF_SECONDS = 1.0
 
 EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page."""
+
+
+def _create_client(settings: Settings) -> ollama.Client:
+    """Create Ollama client with backend-appropriate configuration.
+
+    Configures the client with the correct URL and authentication headers
+    based on the selected backend.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings containing Ollama configuration.
+
+    Returns
+    -------
+    ollama.Client
+        Configured Ollama client instance.
+    """
+    headers = None
+    if settings.ollama_backend.requires_api_key and settings.ollama_api_key:
+        headers = {
+            "Authorization": f"Bearer {settings.ollama_api_key.get_secret_value()}"
+        }
+
+    return ollama.Client(
+        host=settings.ollama_url,
+        timeout=settings.ollama_timeout,
+        headers=headers,
+    )
 
 
 def _simplify_schema(schema: dict[str, Any]) -> dict[str, Any]:
@@ -104,6 +138,9 @@ def pdf_to_images(pdf_path: Path) -> list[bytes]:
 def check_ollama_connection(settings: Settings) -> bool:
     """Check if Ollama is reachable and the configured model is available.
 
+    For local backends, verifies the model is available. For cloud backends,
+    skips model verification as the cloud API doesn't support model listing.
+
     Parameters
     ----------
     settings : Settings
@@ -112,12 +149,13 @@ def check_ollama_connection(settings: Settings) -> bool:
     Returns
     -------
     bool
-        True if Ollama is reachable and model is available, False otherwise.
+        True if Ollama is reachable (and model available for local), False otherwise.
     """
     try:
-        client = ollama.Client(
-            host=settings.ollama_url, timeout=settings.ollama_timeout
-        )
+        client = _create_client(settings)
+        if settings.ollama_backend == OllamaBackend.CLOUD:
+            # Cloud doesn't support model listing - assume available
+            return True
         models = client.list()
         model_names = [m.model for m in models.models]
         return settings.ollama_model in model_names
@@ -160,7 +198,7 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
     else:
         images = [file_path.read_bytes()]
 
-    client = ollama.Client(host=settings.ollama_url, timeout=settings.ollama_timeout)
+    client = _create_client(settings)
     last_error: Exception | None = None
 
     for attempt in range(MAX_RETRIES + 1):

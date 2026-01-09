@@ -10,6 +10,7 @@ from invoice_tracker.settings import (
     ExtractionError,
     InvoiceData,
     InvoiceRecord,
+    OllamaBackend,
     ProcessingResult,
     Settings,
 )
@@ -160,13 +161,13 @@ class TestSettings:
     def test_settings_from_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Settings should load from environment variables with INVOICE_ prefix."""
         monkeypatch.setenv("INVOICE_OLLAMA_MODEL", "llava")
-        monkeypatch.setenv("INVOICE_OLLAMA_URL", "http://custom:11434")
+        monkeypatch.setenv("INVOICE_OLLAMA_URL_OVERRIDE", "http://custom:11434")
         monkeypatch.setenv("INVOICE_INCOMING_DIR", "/custom/incoming")
 
         settings = Settings(_cli_parse_args=False)
 
         assert settings.ollama_model == "llava"
-        assert settings.ollama_url == "http://custom:11434"
+        assert settings.ollama_url == "http://custom:11434"  # Via override
         assert settings.incoming_dir == Path("/custom/incoming")
 
     def test_supported_extensions_default(self, test_settings: Settings) -> None:
@@ -187,3 +188,31 @@ class TestExtractionError:
     def test_extraction_error_is_exception(self) -> None:
         """ExtractionError should be an Exception subclass."""
         assert issubclass(ExtractionError, Exception)
+
+
+class TestSettingsOllamaValidation:
+    """Tests for Ollama configuration validation."""
+
+    def test_cloud_backend_without_api_key_raises_error(self) -> None:
+        """Cloud backend without API key should raise ValueError."""
+        with pytest.raises(ValueError, match="ollama_api_key is required"):
+            Settings(_cli_parse_args=False, ollama_backend=OllamaBackend.CLOUD)
+
+    def test_cloud_backend_with_api_key_succeeds(self) -> None:
+        """Cloud backend with API key should work and derive correct URL."""
+        settings = Settings(
+            _cli_parse_args=False,
+            ollama_backend=OllamaBackend.CLOUD,
+            ollama_api_key="test-key",
+        )
+        assert settings.ollama_backend == OllamaBackend.CLOUD
+        assert settings.ollama_url == "https://api.ollama.com"
+
+    def test_ollama_url_override_takes_precedence(self) -> None:
+        """ollama_url_override should override backend default."""
+        settings = Settings(
+            _cli_parse_args=False,
+            ollama_backend=OllamaBackend.LOCAL,
+            ollama_url_override="http://custom:11434",
+        )
+        assert settings.ollama_url == "http://custom:11434"

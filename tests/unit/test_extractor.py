@@ -8,12 +8,18 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from invoice_tracker.extractor import (
+    _create_client,
     _simplify_schema,
     check_ollama_connection,
     extract_invoice,
     pdf_to_images,
 )
-from invoice_tracker.settings import ExtractionError, InvoiceData, Settings
+from invoice_tracker.settings import (
+    ExtractionError,
+    InvoiceData,
+    OllamaBackend,
+    Settings,
+)
 
 
 @pytest.fixture
@@ -89,6 +95,47 @@ class TestCheckOllamaConnection:
             result = check_ollama_connection(mock_settings)
 
             assert result is False
+
+    def test_cloud_backend_skips_model_check(self) -> None:
+        """Cloud backend should skip model listing and return True."""
+        settings = Settings(
+            _cli_parse_args=False,
+            ollama_backend=OllamaBackend.CLOUD,
+            ollama_api_key="test-key",
+        )
+        with patch("invoice_tracker.extractor.ollama.Client"):
+            result = check_ollama_connection(settings)
+            assert result is True
+
+
+class TestCreateClient:
+    """Tests for _create_client factory function."""
+
+    def test_cloud_backend_includes_auth_headers(self) -> None:
+        """Cloud backend should include Authorization header."""
+        settings = Settings(
+            _cli_parse_args=False,
+            ollama_backend=OllamaBackend.CLOUD,
+            ollama_api_key="test-api-key",
+        )
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            _create_client(settings)
+            mock_client.assert_called_once_with(
+                host="https://api.ollama.com",
+                timeout=settings.ollama_timeout,
+                headers={"Authorization": "Bearer test-api-key"},
+            )
+
+    def test_local_backend_no_auth_headers(self) -> None:
+        """Local backend should not include Authorization header."""
+        settings = Settings(_cli_parse_args=False)
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            _create_client(settings)
+            mock_client.assert_called_once_with(
+                host="http://localhost:11434",
+                timeout=settings.ollama_timeout,
+                headers=None,
+            )
 
 
 class TestExtractInvoice:
