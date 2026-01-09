@@ -206,7 +206,7 @@ class TestSettingsOllamaValidation:
             ollama_api_key="test-key",
         )
         assert settings.ollama_backend == OllamaBackend.CLOUD
-        assert settings.ollama_url == "https://api.ollama.com"
+        assert settings.ollama_url == "https://ollama.com"
 
     def test_ollama_url_override_takes_precedence(self) -> None:
         """ollama_url_override should override backend default."""

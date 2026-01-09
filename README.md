@@ -1,16 +1,14 @@
-# [Your Project Name]
+# Invoice Tracker
 
-> **Note**: This is a template file. Replace the bracketed placeholders with your actual project information.
-
-[Brief description of your project - what it does, who it's for, and why it's useful]
+Invoice tracking automation tool that extracts structured data from invoice images using Ollama (local or cloud) and persists data to Excel.
 
 ## Features
 
-- [List your project's key features and capabilities]
-- [Example: Data processing with pandas and numpy]
-- [Example: REST API with FastAPI]
-- [Example: Machine learning model training]
-- [Example: Command-line interface for batch processing]
+- Extract structured data from invoice images using vision LLMs
+- Support for local Ollama instance or Ollama cloud API
+- Automatic file organization (incoming → processed/failed)
+- Excel-based data persistence
+- Command-line interface with environment variable configuration
 
 ## Installation
 
@@ -18,70 +16,92 @@
 
 - Python 3.13.7 or higher
 - [uv](https://docs.astral.sh/uv/) for dependency management
-
-### Install from PyPI
-
-```bash
-pip install [your-project-name]
-```
+- [Ollama](https://ollama.ai/) (for local mode) or Ollama cloud API key (for cloud mode)
 
 ### Install from source
 
 ```bash
-git clone https://github.com/[your-username]/[your-project-name].git
-cd [your-project-name]
+git clone https://github.com/your-username/invoice_tracker.git
+cd invoice_tracker
 uv sync
 ```
 
 ## Quick Start
 
-### Basic Usage
+### Local Ollama (Default)
 
-```python
-from [your_package_name] import [main_class_or_function]
-
-# Example usage
-[example_code_here]
-```
-
-### Command Line Interface
+Ensure Ollama is running locally with a vision model:
 
 ```bash
-# Example CLI commands
-[your-project-name] --help
-[your-project-name] [command] [options]
+# Pull a vision model
+ollama pull ministral-3:14b
+
+# Process an invoice
+invoice-tracker invoice.png
 ```
 
-### Configuration
+### Ollama Cloud
 
-Create a `.env` file or set environment variables:
+Use the cloud backend with your API key:
 
 ```bash
-# Example environment variables
-SETTING_NAME=value
-API_KEY=your_api_key_here
+export INVOICE_OLLAMA_BACKEND=cloud
+export INVOICE_OLLAMA_API_KEY="your-api-key"
+invoice-tracker invoice.png
 ```
 
-## Documentation
+### Custom Endpoint
 
-[Add links to detailed documentation, API references, tutorials, etc.]
+For advanced setups with a custom Ollama endpoint:
 
-- [API Documentation](docs/api.md)
-- [User Guide](docs/user-guide.md)
-- [Developer Guide](docs/development.md)
-
-## Examples
-
-### Example 1: [Description]
-
-```python
-# Example code demonstrating key functionality
+```bash
+export INVOICE_OLLAMA_BACKEND=local
+export INVOICE_OLLAMA_URL_OVERRIDE="http://custom-host:11434"
+invoice-tracker invoice.png
 ```
 
-### Example 2: [Description]
+## Configuration
 
-```python
-# Another example showing different use case
+All settings can be configured via environment variables with the `INVOICE_` prefix:
+
+### Ollama Settings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `INVOICE_OLLAMA_BACKEND` | Backend selection: `local` or `cloud` | `local` |
+| `INVOICE_OLLAMA_API_KEY` | API key for cloud backend (required when `backend=cloud`) | - |
+| `INVOICE_OLLAMA_URL_OVERRIDE` | Override the backend's default URL (advanced) | - |
+| `INVOICE_OLLAMA_MODEL` | Vision model for invoice extraction | `ministral-3:14b` |
+| `INVOICE_OLLAMA_TIMEOUT` | API timeout in seconds | `120` |
+
+### Backend URLs
+
+- **Local**: `http://localhost:11434` (default)
+- **Cloud**: `https://ollama.com`
+
+### Directory Settings
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `INVOICE_INCOMING_DIR` | Directory for incoming invoice images | `invoices/incoming` |
+| `INVOICE_PROCESSED_DIR` | Directory for successfully processed invoices | `invoices/processed` |
+| `INVOICE_FAILED_DIR` | Directory for failed invoice processing | `invoices/failed` |
+| `INVOICE_DATA_FILE` | Path to Excel data file | `data/tracker.xlsx` |
+
+## CLI Usage
+
+```bash
+# Show help and available options
+invoice-tracker --help
+
+# Process a single invoice
+invoice-tracker path/to/invoice.png
+
+# Process with specific backend
+invoice-tracker --ollama-backend cloud --ollama-api-key "your-key" invoice.png
+
+# Process with custom model
+invoice-tracker --ollama-model llava invoice.png
 ```
 
 ## Development
@@ -90,14 +110,11 @@ API_KEY=your_api_key_here
 
 ```bash
 # Clone the repository
-git clone https://github.com/[your-username]/[your-project-name].git
-cd [your-project-name]
+git clone https://github.com/your-username/invoice_tracker.git
+cd invoice_tracker
 
 # Install dependencies (development group)
 uv sync --group dev
-
-# Install all dependencies including app-specific ones
-uv sync --all-groups
 
 # Install pre-commit hooks
 uv run pre-commit install
@@ -116,26 +133,7 @@ uv run pytest
 uv run pytest --cov=src
 
 # Run specific test file
-uv run pytest tests/test_specific.py
-```
-
-### Dependency Management
-
-This project uses uv's modern dependency-groups format:
-
-```bash
-# Install development dependencies
-uv sync --group dev
-
-# Install app-specific dependencies
-uv sync --group app
-
-# Install all dependency groups
-uv sync --all-groups
-
-# Add new dependencies to specific groups
-uv add --group dev pytest-mock
-uv add --group app streamlit
+uv run pytest tests/unit/test_extractor.py
 ```
 
 ### Code Quality
@@ -149,20 +147,17 @@ uv run ruff format .
 uv run mypy src/
 ```
 
-## API Reference
+## Migration Notes
 
-[If applicable, add API documentation or link to generated docs]
+### From versions using `INVOICE_OLLAMA_URL`
 
-## Troubleshooting
+The `INVOICE_OLLAMA_URL` setting has been replaced with a backend-based configuration:
 
-### Common Issues
-
-**Issue 1**: [Description of common problem]
-- **Solution**: [How to fix it]
-
-**Issue 2**: [Another common problem]
-- **Solution**: [How to fix it]
-
+| Old Configuration | New Configuration |
+|-------------------|-------------------|
+| `INVOICE_OLLAMA_URL=http://localhost:11434` | No change needed (default) |
+| `INVOICE_OLLAMA_URL=http://custom:11434` | `INVOICE_OLLAMA_URL_OVERRIDE=http://custom:11434` |
+| `INVOICE_OLLAMA_URL=https://ollama.com` | `INVOICE_OLLAMA_BACKEND=cloud` + `INVOICE_OLLAMA_API_KEY=...` |
 
 ## Contributing
 

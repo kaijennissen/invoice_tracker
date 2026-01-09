@@ -121,7 +121,7 @@ class TestCreateClient:
         with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
             _create_client(settings)
             mock_client.assert_called_once_with(
-                host="https://api.ollama.com",
+                host="https://ollama.com",
                 timeout=settings.ollama_timeout,
                 headers={"Authorization": "Bearer test-api-key"},
             )

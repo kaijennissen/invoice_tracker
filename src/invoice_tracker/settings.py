@@ -44,7 +44,7 @@ class OllamaBackend(str, Enum):
         """
         return {
             OllamaBackend.LOCAL: "http://localhost:11434",
-            OllamaBackend.CLOUD: "https://api.ollama.com",
+            OllamaBackend.CLOUD: "https://ollama.com",
         }[self]
 
     @property
