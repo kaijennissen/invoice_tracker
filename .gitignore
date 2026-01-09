@@ -9,9 +9,12 @@
 runs/**
 *.csv
 *.feather
+*.jpg
+*.jpeg
 *.parquet
 *.pdf
 *.pickle
+*.png
 *.pkl
 *.hdf5
 *.xls
