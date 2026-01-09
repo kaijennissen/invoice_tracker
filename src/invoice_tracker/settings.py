@@ -10,10 +10,53 @@ Settings can be configured via:
 
 from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, CliPositionalArg, SettingsConfigDict
+
+
+class OllamaBackend(str, Enum):
+    """Ollama backend selection with baked-in configuration.
+
+    Each backend has an associated base URL and authentication requirements.
+
+    Attributes
+    ----------
+    LOCAL : str
+        Local Ollama instance at localhost:11434.
+    CLOUD : str
+        Ollama cloud API requiring authentication.
+    """
+
+    LOCAL = "local"
+    CLOUD = "cloud"
+
+    @property
+    def base_url(self) -> str:
+        """Get the base URL for this backend.
+
+        Returns
+        -------
+        str
+            The default API endpoint URL.
+        """
+        return {
+            OllamaBackend.LOCAL: "http://localhost:11434",
+            OllamaBackend.CLOUD: "https://api.ollama.com",
+        }[self]
+
+    @property
+    def requires_api_key(self) -> bool:
+        """Check if this backend requires an API key.
+
+        Returns
+        -------
+        bool
+            True if authentication is required.
+        """
+        return self == OllamaBackend.CLOUD
 
 
 class Settings(BaseSettings):
@@ -65,9 +108,17 @@ class Settings(BaseSettings):
     )
 
     # Ollama settings
-    ollama_url: str = Field(
-        default="http://localhost:11434",
-        description="Ollama API base URL",
+    ollama_backend: OllamaBackend = Field(
+        default=OllamaBackend.LOCAL,
+        description="Ollama backend: 'local' for local instance, 'cloud' for Ollama cloud",
+    )
+    ollama_api_key: SecretStr | None = Field(
+        default=None,
+        description="API key for Ollama cloud (required when backend=cloud)",
+    )
+    ollama_url_override: str | None = Field(
+        default=None,
+        description="Override the backend's default URL (advanced)",
     )
     ollama_model: str = Field(
         default="ministral-3:14b",
@@ -77,6 +128,41 @@ class Settings(BaseSettings):
         default=120,
         description="API timeout in seconds",
     )
+
+    @property
+    def ollama_url(self) -> str:
+        """Get the effective Ollama API URL.
+
+        Returns the override URL if set, otherwise the backend's default URL.
+
+        Returns
+        -------
+        str
+            The Ollama API endpoint URL.
+        """
+        return self.ollama_url_override or self.ollama_backend.base_url
+
+    @model_validator(mode="after")
+    def validate_ollama_config(self) -> "Settings":
+        """Validate Ollama configuration consistency.
+
+        Ensures API key is provided when using a backend that requires it.
+
+        Returns
+        -------
+        Settings
+            The validated instance.
+
+        Raises
+        ------
+        ValueError
+            If API key is missing for a backend that requires it.
+        """
+        if self.ollama_backend.requires_api_key and not self.ollama_api_key:
+            raise ValueError(
+                f"ollama_api_key is required when using '{self.ollama_backend.value}' backend"
+            )
+        return self
 
     # Processing settings
     supported_extensions: list[str] = Field(
@@ -197,6 +283,7 @@ class ExtractionError(Exception):
 
 
 __all__ = [
+    "OllamaBackend",
     "Settings",
     "InvoiceData",
     "InvoiceRecord",
