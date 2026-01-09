@@ -410,6 +410,87 @@ Tasks:
 
 ---
 
+#### Step 8: PDF Support
+
+**Objective:** Enable processing of multi-page PDF invoices.
+
+**Problem:** Multi-page invoices often have header info on page 1 and totals on the last page. The vision model needs to see all pages to extract complete data.
+
+**Approach:** Convert PDF pages to images and pass all pages as multiple images in a single Ollama request. The API supports multiple images in the `images` array.
+
+**Dependencies needed:**
+- `pymupdf` (pure Python, no system dependencies) or `pdf2image` (requires poppler)
+
+**Implementation:**
+
+Ollama accepts images as file paths, base64 strings, or raw bytes. Using raw bytes keeps everything in memory without temp files.
+
+```python
+# In extractor.py or new pdf_handler.py
+import fitz  # pymupdf
+
+def pdf_to_images(pdf_path: Path) -> list[bytes]:
+    """Convert PDF pages to in-memory PNG images.
+
+    Parameters
+    ----------
+    pdf_path : Path
+        Path to the PDF file.
+
+    Returns
+    -------
+    list[bytes]
+        List of PNG images as raw bytes (one per page).
+    """
+    doc = fitz.open(pdf_path)
+    images = []
+
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))  # 2x scale for better quality
+        images.append(pix.tobytes("png"))
+
+    doc.close()
+    return images
+```
+
+**Update to extractor:**
+```python
+def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
+    """Extract invoice data from image or PDF."""
+
+    if file_path.suffix.lower() == ".pdf":
+        images = pdf_to_images(file_path)  # list[bytes]
+    else:
+        images = [file_path.read_bytes()]  # single image as bytes
+
+    response = client.chat(
+        model=settings.ollama_model,
+        messages=[{
+            "role": "user",
+            "content": EXTRACTION_PROMPT,
+            "images": images,  # Ollama accepts raw bytes directly
+        }],
+        format=_get_extraction_schema(),
+        options={"temperature": 0},
+    )
+
+    return InvoiceData.model_validate_json(response.message.content)
+```
+
+Tasks:
+- [ ] Add `pymupdf` to dependencies
+- [ ] Add `.pdf` to `supported_extensions` default
+- [ ] Implement `pdf_to_images(pdf_path: Path) -> list[bytes]`
+- [ ] Update `extract_invoice()` to handle PDFs (pass bytes, not paths)
+- [ ] Update prompt to mention "total amount is typically on the last page"
+- [ ] Write unit tests with sample multi-page PDF
+- [ ] Test with real multi-page invoices
+
+**Dependencies:** Step 4
+
+---
+
 ### CLI Reference
 
 ```bash
@@ -447,7 +528,8 @@ invoice-tracker --help
 
 ### Success Criteria
 
-- [ ] `invoice-tracker` processes all PNG/JPG invoices in `incoming/`
+- [ ] `invoice-tracker` processes all PNG/JPG/PDF invoices in `incoming/`
+- [ ] Multi-page PDFs extract data correctly (header from page 1, totals from last page)
 - [ ] `invoice-tracker invoice.png` processes a single file
 - [ ] `invoice-tracker --dry-run` extracts without persisting or moving
 - [ ] Extracted data appears correctly in `data/tracker.xlsx`

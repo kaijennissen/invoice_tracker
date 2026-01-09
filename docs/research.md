@@ -176,11 +176,11 @@ Key implementation details:
 
 Prompt strategy:
 ```
-You are an invoice data extraction assistant. Extract the following 
-information from the provided invoice image. Be precise with dates 
+You are an invoice data extraction assistant. Extract the following
+information from the provided invoice image. Be precise with dates
 (use ISO format YYYY-MM-DD) and amounts (numeric value only).
 
-If a field cannot be determined, use "UNKNOWN" for text fields 
+If a field cannot be determined, use "UNKNOWN" for text fields
 and null for dates/amounts.
 ```
 
@@ -232,7 +232,7 @@ for each file:
     │         │
     │         ▼
     └─► move_to_processed() or move_to_failed()
-    
+
     ▼
 return ProcessingReport
 ```
