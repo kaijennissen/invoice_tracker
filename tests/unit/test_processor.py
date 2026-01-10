@@ -1,7 +1,6 @@
 """Tests for invoice_tracker.processor module."""
 
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -281,7 +280,7 @@ class TestProcessBatch:
                     invoice_id="INV-001",
                     issue_date=date(2024, 1, 1),
                     due_date=date(2024, 2, 1),
-                    amount=Decimal("100"),
+                    amount=100.0,
                     currency="EUR",
                     recipient="Test",
                 ),
@@ -290,7 +289,7 @@ class TestProcessBatch:
                     invoice_id="INV-002",
                     issue_date=date(2024, 1, 1),
                     due_date=date(2024, 2, 1),
-                    amount=Decimal("200"),
+                    amount=200.0,
                     currency="EUR",
                     recipient="Test",
                 ),

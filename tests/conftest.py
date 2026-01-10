@@ -1,7 +1,6 @@
 """Shared test fixtures for invoice_tracker tests."""
 
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -23,7 +22,7 @@ def sample_invoice_data() -> InvoiceData:
         invoice_id="INV-2024-001",
         issue_date=date(2024, 1, 15),
         due_date=date(2024, 2, 15),
-        amount=Decimal("1234.56"),
+        amount=1234.56,
         currency="EUR",
         recipient="John Doe",
     )

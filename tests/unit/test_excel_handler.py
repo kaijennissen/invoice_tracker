@@ -1,7 +1,6 @@
 """Tests for invoice_tracker.excel_handler module."""
 
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -87,7 +86,7 @@ class TestAppendInvoice:
             invoice_id="INV-002",
             issue_date=date(2024, 2, 1),
             due_date=date(2024, 3, 1),
-            amount=Decimal("500.00"),
+            amount=500.00,
             currency="EUR",
             recipient="Jane Doe",
             source_file="invoice2.png",
@@ -162,7 +161,7 @@ class TestInvoiceExists:
                 invoice_id=f"INV-{i:03d}",
                 issue_date=date(2024, 1, i + 1),
                 due_date=date(2024, 2, i + 1),
-                amount=Decimal(str(100 * (i + 1))),
+                amount=float(100 * (i + 1)),
                 currency="EUR",
                 recipient=f"Recipient {i}",
                 source_file=f"invoice_{i}.png",

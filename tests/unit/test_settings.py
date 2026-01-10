@@ -1,7 +1,6 @@
 """Tests for invoice_tracker.settings module."""
 
 from datetime import date, datetime
-from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -26,14 +25,14 @@ class TestInvoiceData:
             invoice_id="INV-001",
             issue_date=date(2024, 1, 1),
             due_date=date(2024, 2, 1),
-            amount=Decimal("100.00"),
+            amount=100.00,
             currency="EUR",
             recipient="Test Recipient",
         )
 
         assert data.party == "Test Company"
         assert data.invoice_id == "INV-001"
-        assert data.amount == Decimal("100.00")
+        assert data.amount == 100.00
 
     def test_currency_defaults_to_eur(self) -> None:
         """InvoiceData currency should default to EUR."""
@@ -42,25 +41,25 @@ class TestInvoiceData:
             invoice_id="INV-001",
             issue_date=date(2024, 1, 1),
             due_date=date(2024, 2, 1),
-            amount=Decimal("100"),
+            amount=100.0,
             recipient="Test",
         )
 
         assert data.currency == "EUR"
 
-    def test_model_dump_preserves_decimal(self) -> None:
-        """InvoiceData.model_dump should preserve Decimal type."""
+    def test_model_dump_preserves_float(self) -> None:
+        """InvoiceData.model_dump should preserve float type."""
         data = InvoiceData(
             party="Test",
             invoice_id="INV-001",
             issue_date=date(2024, 1, 1),
             due_date=date(2024, 2, 1),
-            amount=Decimal("123.45"),
+            amount=123.45,
             recipient="Test",
         )
 
         dumped = data.model_dump()
-        assert dumped["amount"] == Decimal("123.45")
+        assert dumped["amount"] == 123.45
 
 
 class TestInvoiceRecord:
