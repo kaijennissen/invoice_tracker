@@ -9,7 +9,6 @@ Settings can be configured via:
 """
 
 from datetime import date, datetime
-from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 
@@ -186,7 +185,7 @@ class InvoiceData(BaseModel):
         Date the invoice was issued.
     due_date : date
         Payment due date.
-    amount : Decimal
+    amount : float
         Total amount to pay.
     currency : str
         Currency code (default: EUR).
@@ -198,7 +197,7 @@ class InvoiceData(BaseModel):
     invoice_id: str = Field(description="Unique invoice identifier")
     issue_date: date = Field(description="Date the invoice was issued (YYYY-MM-DD)")
     due_date: date = Field(description="Payment due date (YYYY-MM-DD)")
-    amount: Decimal = Field(description="Total amount to pay")
+    amount: float = Field(description="Total amount to pay")
     currency: str = Field(default="EUR", description="Currency code")
     recipient: str = Field(description="Person/entity the invoice is addressed to")
 
