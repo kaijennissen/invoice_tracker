@@ -29,6 +29,7 @@ dependencies = [
     "openpyxl",
     "ollama",
     "pymupdf",
+    "baml-py>=0.216.0",
 ]
 
 [project.scripts]
