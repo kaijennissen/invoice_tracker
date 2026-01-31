@@ -93,9 +93,10 @@ client<llm> CustomHaiku {
 //   }
 // }
 
-// Example Ollama client for local models (uncomment to use)
+// Ollama client for local models
  client<llm> CustomOllama {
    provider openai-generic
+   retry_policy Exponential
    options {
      base_url "http://localhost:11434/v1"
      model "gemma3:27b"

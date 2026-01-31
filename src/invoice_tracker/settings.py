@@ -128,6 +128,12 @@ class Settings(BaseSettings):
         description="API timeout in seconds",
     )
 
+    # BAML settings
+    use_baml: bool = Field(
+        default=False,
+        description="Use BAML client for extraction instead of direct Ollama client",
+    )
+
     @property
     def ollama_url(self) -> str:
         """Get the effective Ollama API URL.

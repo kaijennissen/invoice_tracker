@@ -9,14 +9,17 @@ class InvoiceData {
   recipient string
 }
 
-// Create a function to extract the resume from a string.
-function ExtractInvoiceData(image: image) -> InvoiceData {
+// Create a function to extract invoice data from images.
+function ExtractInvoiceData(images: image[]) -> InvoiceData {
   // Specify a client as provider/model-name
   // You can also use custom LLM params with a custom client name from clients.baml like "client CustomGPT5" or "client CustomSonnet4"
-  client CustomOllama // Set OPENAI_API_KEY to use this client.
+  client CustomOllama // Uses local Ollama instance.
   prompt #"
-    Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page.
-    {{ image }}
+    Extract invoice data from these images. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page.
+
+    {% for img in images %}
+    {{ img }}
+    {% endfor %}
 
     {{ ctx.output_format }}
   "#
@@ -24,10 +27,10 @@ function ExtractInvoiceData(image: image) -> InvoiceData {
 
 
 
-// Test the function with a sample resume. Open the VSCode playground to run this.
+// Test the function with a sample invoice. Open the VSCode playground to run this.
 test TestName {
   functions [ExtractInvoiceData]
   args {
-    image { file "/Users/kj/01_Projects/invoice_tracker/invoice.jpeg" }
+    images [{ file "/Users/kjennissen/01_projects/invoice_tracker/invoice.png" }]
   }
 }
