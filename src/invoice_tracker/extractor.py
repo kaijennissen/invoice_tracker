@@ -1,16 +1,22 @@
 """Invoice data extraction using Ollama vision models.
 
-This module provides functions to extract structured invoice data from images
-and PDFs using Ollama's vision capabilities. It is part of the core logic layer
-and handles communication with the Ollama API.
+This module provides functions and classes to extract structured invoice data
+from images and PDFs using Ollama's vision capabilities. It is part of the core
+logic layer and handles communication with the Ollama API.
+
+Provides both:
+- Module-level functions (extract_invoice, check_ollama_connection) for backward
+  compatibility
+- ExtractionStrategy protocol and OllamaExtractor class for extensibility
 """
 
-import time
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import fitz
 import ollama
 
+from invoice_tracker.retry import RetryConfig, with_retry
 from invoice_tracker.settings import (
     ExtractionError,
     InvoiceData,
@@ -18,11 +24,43 @@ from invoice_tracker.settings import (
     Settings,
 )
 
-# Retry settings
-MAX_RETRIES = 2
-INITIAL_BACKOFF_SECONDS = 1.0
+_EXTRACTION_RETRY = RetryConfig(max_retries=2, initial_backoff=1.0)
 
 EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page."""
+
+
+@runtime_checkable
+class ExtractionStrategy(Protocol):
+    """Protocol for invoice data extraction backends.
+
+    Implementations receive raw image bytes (not file paths) so that
+    file I/O stays in the caller.
+    """
+
+    def extract(self, images: list[bytes]) -> InvoiceData:
+        """Extract invoice data from images.
+
+        Parameters
+        ----------
+        images : list[bytes]
+            One or more images as raw bytes.
+
+        Returns
+        -------
+        InvoiceData
+            Extracted and validated invoice data.
+        """
+        ...
+
+    def check_connection(self) -> bool:
+        """Check whether the backend is reachable.
+
+        Returns
+        -------
+        bool
+            True if the backend is available.
+        """
+        ...
 
 
 def _create_client(settings: Settings) -> ollama.Client:
@@ -92,6 +130,96 @@ def pdf_to_images(pdf_path: Path) -> list[bytes]:
     return images
 
 
+class OllamaExtractor:
+    """Ollama-based invoice data extractor.
+
+    Wraps the Ollama API with retry logic and structured output parsing.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings containing Ollama configuration.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._client = _create_client(settings)
+
+    @with_retry(_EXTRACTION_RETRY)
+    def extract(self, images: list[bytes]) -> InvoiceData:
+        """Extract invoice data from images via Ollama.
+
+        Parameters
+        ----------
+        images : list[bytes]
+            One or more images as raw bytes.
+
+        Returns
+        -------
+        InvoiceData
+            Extracted and validated invoice data.
+
+        Raises
+        ------
+        ExtractionError
+            If the response is empty.
+        """
+        response = self._client.chat(
+            model=self._settings.ollama_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": EXTRACTION_PROMPT,
+                    "images": images,
+                }
+            ],
+            format=InvoiceData.model_json_schema(),
+            options={"temperature": 0},
+        )
+
+        content = response.message.content
+        if content is None:
+            raise ExtractionError("Empty response from Ollama")
+
+        return InvoiceData.model_validate_json(content)
+
+    def check_connection(self) -> bool:
+        """Check if Ollama is reachable and the model is available.
+
+        Returns
+        -------
+        bool
+            True if Ollama is reachable (and model available for local).
+        """
+        try:
+            if self._settings.ollama_backend == OllamaBackend.CLOUD:
+                return True
+            models = self._client.list()
+            model_names = [m.model for m in models.models]
+            return self._settings.ollama_model in model_names
+        except Exception:
+            return False
+
+
+def create_extractor(settings: Settings) -> OllamaExtractor:
+    """Create the default extractor for the given settings.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings.
+
+    Returns
+    -------
+    OllamaExtractor
+        An Ollama-based extractor instance.
+    """
+    return OllamaExtractor(settings)
+
+
+# --- Backward-compatible module-level functions ---
+
+
 def check_ollama_connection(settings: Settings) -> bool:
     """Check if Ollama is reachable and the configured model is available.
 
@@ -108,16 +236,7 @@ def check_ollama_connection(settings: Settings) -> bool:
     bool
         True if Ollama is reachable (and model available for local), False otherwise.
     """
-    try:
-        client = _create_client(settings)
-        if settings.ollama_backend == OllamaBackend.CLOUD:
-            # Cloud doesn't support model listing - assume available
-            return True
-        models = client.list()
-        model_names = [m.model for m in models.models]
-        return settings.ollama_model in model_names
-    except Exception:
-        return False
+    return OllamaExtractor(settings).check_connection()
 
 
 def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
@@ -125,7 +244,7 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
 
     Uses the configured Ollama model to analyze the invoice image or PDF and
     extract structured data. For PDFs, all pages are converted to images and
-    passed together. Implements retry logic with exponential backoff.
+    passed together.
 
     Parameters
     ----------
@@ -155,40 +274,20 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
     else:
         images = [file_path.read_bytes()]
 
-    client = _create_client(settings)
-    last_error: Exception | None = None
+    extractor = OllamaExtractor(settings)
 
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            response = client.chat(
-                model=settings.ollama_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": EXTRACTION_PROMPT,
-                        "images": images,
-                    }
-                ],
-                format=InvoiceData.model_json_schema(),
-                options={"temperature": 0},
-            )
-
-            content = response.message.content
-            if content is None:
-                raise ExtractionError("Empty response from Ollama")
-
-            return InvoiceData.model_validate_json(content)
-
-        except Exception as e:
-            last_error = e
-            if attempt < MAX_RETRIES:
-                backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
-                time.sleep(backoff)
-
-    raise ExtractionError(f"Failed to extract invoice data: {last_error}")
+    try:
+        return extractor.extract(images)
+    except ExtractionError:
+        raise
+    except Exception as e:
+        raise ExtractionError(f"Failed to extract invoice data: {e}") from e
 
 
 __all__ = [
+    "ExtractionStrategy",
+    "OllamaExtractor",
+    "create_extractor",
     "check_ollama_connection",
     "extract_invoice",
     "pdf_to_images",

@@ -2,7 +2,7 @@
 
 from datetime import date, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -246,15 +246,13 @@ class TestProcessSingle:
         invoice_file = processor_settings.incoming_dir / "test.png"
         invoice_file.touch()
 
-        with (
-            patch("invoice_tracker.processor.extract_invoice") as mock_extract,
-            patch("invoice_tracker.processor.invoice_exists") as mock_exists,
-            patch("invoice_tracker.processor.init_excel"),
-        ):
-            mock_extract.return_value = sample_invoice_data
-            mock_exists.return_value = True
+        mock_repo = MagicMock()
+        mock_repo.exists.return_value = True
 
-            result = process_single(invoice_file, processor_settings)
+        with patch("invoice_tracker.processor.extract_invoice") as mock_extract:
+            mock_extract.return_value = sample_invoice_data
+
+            result = process_single(invoice_file, processor_settings, repo=mock_repo)
 
             assert result.success is False
             assert "Duplicate invoice" in result.error  # type: ignore[operator]
