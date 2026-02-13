@@ -516,3 +516,26 @@ __all__ = [
     "CURRENCY_MAP",
     "FIELD_MATCHERS",
 ]
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Evaluate invoice extraction methods")
+    parser.add_argument(
+        "--ground-truth",
+        type=Path,
+        default=Path("data/evaluation/ground_truth.json"),
+        help="Path to ground truth JSON file",
+    )
+    parser.add_argument(
+        "--methods",
+        nargs="+",
+        default=["structured_outputs", "baml"],
+        choices=["structured_outputs", "baml"],
+        help="Extraction methods to evaluate",
+    )
+    args = parser.parse_args()
+
+    settings = Settings(_cli_parse_args=False)
+    results = run_evaluation(args.ground_truth, args.methods, settings)
+    print_summary(results)
