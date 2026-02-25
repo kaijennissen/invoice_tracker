@@ -12,8 +12,21 @@ from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 
-from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, CliPositionalArg, SettingsConfigDict
+
+# Currency symbol to ISO code mapping
+CURRENCY_MAP: dict[str, str] = {
+    "€": "EUR",
+    "$": "USD",
+    "£": "GBP",
+    "¥": "JPY",
+    "CHF": "CHF",
+    "EUR": "EUR",
+    "USD": "USD",
+    "GBP": "GBP",
+    "JPY": "JPY",
+}
 
 
 class OllamaBackend(str, Enum):
@@ -207,6 +220,14 @@ class InvoiceData(BaseModel):
     currency: str = Field(default="EUR", description="Currency code")
     recipient: str = Field(description="Person/entity the invoice is addressed to")
 
+    @field_validator("currency", mode="before")
+    @classmethod
+    def normalize_currency(cls, v: str) -> str:
+        """Normalize currency symbols to ISO codes."""
+        if isinstance(v, str):
+            return CURRENCY_MAP.get(v.strip(), v.strip().upper())
+        return v
+
 
 class InvoiceRecord(InvoiceData):
     """Invoice record for storage.
@@ -288,6 +309,7 @@ class ExtractionError(Exception):
 
 
 __all__ = [
+    "CURRENCY_MAP",
     "OllamaBackend",
     "Settings",
     "InvoiceData",

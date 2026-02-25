@@ -5,28 +5,17 @@ extraction methods against ground truth data.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import structlog
+from rapidfuzz import fuzz
 
 from invoice_tracker.extractor import extract_invoice
 from invoice_tracker.settings import InvoiceData, Settings
 
 log = structlog.get_logger()
-
-# Currency symbol to code mapping
-CURRENCY_MAP: dict[str, str] = {
-    "€": "EUR",
-    "$": "USD",
-    "£": "GBP",
-    "¥": "JPY",
-    "CHF": "CHF",
-    "EUR": "EUR",
-    "USD": "USD",
-    "GBP": "GBP",
-    "JPY": "JPY",
-}
 
 
 @dataclass
@@ -103,60 +92,13 @@ def match_exact(extracted: str | None, expected: str | None) -> MatchResult:
     )
 
 
-def _levenshtein_similarity(s1: str, s2: str) -> float:
-    """Calculate Levenshtein similarity between two strings.
-
-    Parameters
-    ----------
-    s1 : str
-        First string.
-    s2 : str
-        Second string.
-
-    Returns
-    -------
-    float
-        Similarity score between 0.0 and 1.0.
-    """
-    if not s1 and not s2:
-        return 1.0
-    if not s1 or not s2:
-        return 0.0
-
-    # Normalize: lowercase and strip whitespace
-    s1 = s1.lower().strip()
-    s2 = s2.lower().strip()
-
-    if s1 == s2:
-        return 1.0
-
-    # Wagner-Fischer algorithm for Levenshtein distance
-    len1, len2 = len(s1), len(s2)
-    if len1 < len2:
-        s1, s2 = s2, s1
-        len1, len2 = len2, len1
-
-    current_row = list(range(len2 + 1))
-
-    for i in range(1, len1 + 1):
-        previous_row = current_row
-        current_row = [i] + [0] * len2
-
-        for j in range(1, len2 + 1):
-            add = previous_row[j] + 1
-            delete = current_row[j - 1] + 1
-            change = previous_row[j - 1] + (0 if s1[i - 1] == s2[j - 1] else 1)
-            current_row[j] = min(add, delete, change)
-
-    distance = current_row[len2]
-    max_len = max(len1, len2)
-    return 1.0 - (distance / max_len)
-
-
 def match_fuzzy(
     extracted: str | None, expected: str | None, threshold: float = 0.85
 ) -> MatchResult:
-    """Compare two strings using Levenshtein similarity.
+    """Compare two strings using token set ratio similarity.
+
+    Uses rapidfuzz's token_set_ratio which handles missing words gracefully
+    by comparing token sets rather than raw character edits.
 
     Parameters
     ----------
@@ -182,7 +124,14 @@ def match_fuzzy(
             details=f"Extracted: {extracted!r}, Expected: {expected!r}",
         )
 
-    similarity = _levenshtein_similarity(extracted, expected)
+    # Handle empty strings
+    s1 = extracted.strip()
+    s2 = expected.strip()
+    if not s1 and not s2:
+        return MatchResult(matched=True, score=1.0, details="Both empty")
+
+    # token_set_ratio returns 0-100, normalize to 0-1
+    similarity = fuzz.token_set_ratio(s1.lower(), s2.lower()) / 100.0
     matched = similarity >= threshold
 
     return MatchResult(
@@ -192,103 +141,10 @@ def match_fuzzy(
     )
 
 
-def match_amount(
-    extracted: float | None,
-    expected: float | None,
-    abs_tolerance: float = 0.01,
-    rel_tolerance: float = 0.001,
-) -> MatchResult:
-    """Compare two amounts with tolerance.
-
-    Matches if difference is within absolute tolerance OR relative tolerance.
-
-    Parameters
-    ----------
-    extracted : float | None
-        Amount extracted by the model.
-    expected : float | None
-        Ground truth amount.
-    abs_tolerance : float
-        Maximum absolute difference (default: 0.01).
-    rel_tolerance : float
-        Maximum relative difference (default: 0.1%).
-
-    Returns
-    -------
-    MatchResult
-        Result with score based on match status.
-    """
-    if extracted is None and expected is None:
-        return MatchResult(matched=True, score=1.0, details="Both None")
-
-    if extracted is None or expected is None:
-        return MatchResult(
-            matched=False,
-            score=0.0,
-            details=f"Extracted: {extracted}, Expected: {expected}",
-        )
-
-    abs_diff = abs(extracted - expected)
-    rel_diff = abs_diff / abs(expected) if expected != 0 else float("inf")
-
-    matched = abs_diff <= abs_tolerance or rel_diff <= rel_tolerance
-
-    return MatchResult(
-        matched=matched,
-        score=1.0 if matched else 0.0,
-        details=f"Diff: {abs_diff:.4f} (abs tol: {abs_tolerance}, rel: {rel_diff:.4%})",
-    )
-
-
-def match_currency(extracted: str | None, expected: str | None) -> MatchResult:
-    """Compare currencies with symbol normalization.
-
-    Maps currency symbols to standard codes before comparison.
-
-    Parameters
-    ----------
-    extracted : str | None
-        Currency extracted by the model (symbol or code).
-    expected : str | None
-        Ground truth currency (symbol or code).
-
-    Returns
-    -------
-    MatchResult
-        Result with score 1.0 if normalized currencies match.
-    """
-    if extracted is None and expected is None:
-        return MatchResult(matched=True, score=1.0, details="Both None")
-
-    if extracted is None or expected is None:
-        return MatchResult(
-            matched=False,
-            score=0.0,
-            details=f"Extracted: {extracted!r}, Expected: {expected!r}",
-        )
-
-    # Normalize using currency map, fallback to uppercase original
-    norm_extracted = CURRENCY_MAP.get(extracted.strip(), extracted.strip().upper())
-    norm_expected = CURRENCY_MAP.get(expected.strip(), expected.strip().upper())
-
-    matched = norm_extracted == norm_expected
-
-    return MatchResult(
-        matched=matched,
-        score=1.0 if matched else 0.0,
-        details=f"Normalized: {norm_extracted} vs {norm_expected}",
-    )
-
-
 # Field name to matching function mapping
-FIELD_MATCHERS: dict[str, str] = {
-    "party": "fuzzy",
-    "invoice_id": "exact",
-    "issue_date": "exact",
-    "due_date": "exact",
-    "amount": "amount",
-    "currency": "currency",
-    "recipient": "fuzzy",
+FIELD_MATCHERS: dict[str, Callable[..., MatchResult]] = {
+    "party": match_fuzzy,
+    "recipient": match_fuzzy,
 }
 
 
@@ -313,7 +169,7 @@ def score_invoice(
     """
     field_scores: dict[str, MatchResult] = {}
 
-    for field_name, matcher_type in FIELD_MATCHERS.items():
+    for field_name in InvoiceData.model_fields:
         extracted_value = getattr(extracted, field_name, None)
         expected_value = expected.get(field_name)
 
@@ -321,18 +177,8 @@ def score_invoice(
         if hasattr(extracted_value, "isoformat"):
             extracted_value = extracted_value.isoformat()
 
-        if matcher_type == "exact":
-            result = match_exact(extracted_value, expected_value)
-        elif matcher_type == "fuzzy":
-            result = match_fuzzy(extracted_value, expected_value)
-        elif matcher_type == "amount":
-            result = match_amount(extracted_value, expected_value)
-        elif matcher_type == "currency":
-            result = match_currency(extracted_value, expected_value)
-        else:
-            result = match_exact(extracted_value, expected_value)
-
-        field_scores[field_name] = result
+        matcher = FIELD_MATCHERS.get(field_name, match_exact)
+        field_scores[field_name] = matcher(extracted_value, expected_value)
 
     # Calculate overall score as average
     overall_score = (
@@ -400,23 +246,17 @@ def run_evaluation(
     ground_truth = load_ground_truth(ground_truth_path)
     base_dir = ground_truth_path.parent
 
-    results: dict[str, list[InvoiceScore]] = {method: [] for method in methods}
+    results: dict[str, list[InvoiceScore]] = {}
 
-    for entry in ground_truth:
-        invoice_path = base_dir / entry["invoice_file"]
-        expected = entry["expected"]
+    for method in methods:
+        eval_settings = settings.model_copy(
+            update={"use_baml": method == "baml"}
+        )
+        method_scores: list[InvoiceScore] = []
 
-        for method in methods:
-            # Configure settings for this method
-            use_baml = method == "baml"
-            eval_settings = Settings(
-                _cli_parse_args=False,
-                use_baml=use_baml,
-                ollama_backend=settings.ollama_backend,
-                ollama_api_key=settings.ollama_api_key,
-                ollama_model=settings.ollama_model,
-                ollama_timeout=settings.ollama_timeout,
-            )
+        for entry in ground_truth:
+            invoice_path = base_dir / entry["invoice_file"]
+            expected = entry["expected"]
 
             try:
                 log.info(
@@ -427,7 +267,7 @@ def run_evaluation(
                 extracted = extract_invoice(invoice_path, eval_settings)
                 score = score_invoice(extracted, expected, method)
                 score.invoice_file = entry["invoice_file"]
-                results[method].append(score)
+                method_scores.append(score)
 
             except Exception as e:
                 log.error(
@@ -436,19 +276,20 @@ def run_evaluation(
                     method=method,
                     error=str(e),
                 )
-                # Create a zero-score result for failed extractions
                 failed_score = InvoiceScore(
                     invoice_file=entry["invoice_file"],
                     method=method,
                     overall_score=0.0,
                     field_scores={
-                        field: MatchResult(
+                        f: MatchResult(
                             matched=False, score=0.0, details=f"Extraction failed: {e}"
                         )
-                        for field in FIELD_MATCHERS
+                        for f in InvoiceData.model_fields
                     },
                 )
-                results[method].append(failed_score)
+                method_scores.append(failed_score)
+
+        results[method] = method_scores
 
     return results
 
@@ -499,7 +340,68 @@ def print_summary(results: dict[str, list[InvoiceScore]]) -> None:
             status = "PASS" if score.overall_score >= 0.85 else "FAIL"
             print(f"    [{status}] {score.invoice_file}: {score.overall_score:.1%}")
 
+    # Method comparison when 2+ methods
+    methods_with_scores = {m: s for m, s in results.items() if s}
+    if len(methods_with_scores) >= 2:
+        _print_method_comparison(methods_with_scores)
+
     print("\n" + "=" * 70)
+
+
+def _print_method_comparison(results: dict[str, list[InvoiceScore]]) -> None:
+    """Print cross-method comparison section.
+
+    Parameters
+    ----------
+    results : dict[str, list[InvoiceScore]]
+        Evaluation results with 2+ methods, each having scores.
+    """
+    methods = list(results.keys())
+
+    print("\n" + "=" * 70)
+    print("METHOD COMPARISON")
+    print("=" * 70)
+
+    # Per-invoice table
+    # Build a map of invoice_file -> {method: score}
+    invoice_scores: dict[str, dict[str, float]] = {}
+    for method, scores in results.items():
+        for score in scores:
+            invoice_scores.setdefault(score.invoice_file, {})[method] = score.overall_score
+
+    header = f"  {'Invoice':<30}" + "".join(f"{m:>15}" for m in methods) + f"{'Winner':>15}"
+    print(header)
+    print("  " + "-" * (len(header) - 2))
+
+    for invoice_file, method_scores in sorted(invoice_scores.items()):
+        row = f"  {invoice_file:<30}"
+        for m in methods:
+            row += f"{method_scores.get(m, 0.0):>14.1%} "
+        best = max(method_scores, key=lambda m: method_scores[m])
+        row += f"{best:>14}"
+        print(row)
+
+    # Per-field breakdown
+    print(f"\n  {'Field':<15}" + "".join(f"{m:>15}" for m in methods) + f"{'Winner':>15}")
+    print("  " + "-" * (15 + 15 * len(methods) + 15))
+
+    # Collect field averages per method
+    field_avgs: dict[str, dict[str, float]] = {}
+    for method, scores in results.items():
+        field_totals: dict[str, list[float]] = {}
+        for score in scores:
+            for field_name, match_result in score.field_scores.items():
+                field_totals.setdefault(field_name, []).append(match_result.score)
+        for field_name, values in field_totals.items():
+            field_avgs.setdefault(field_name, {})[method] = sum(values) / len(values)
+
+    for field_name, method_avgs in sorted(field_avgs.items()):
+        row = f"  {field_name:<15}"
+        for m in methods:
+            row += f"{method_avgs.get(m, 0.0):>14.1%} "
+        best = max(method_avgs, key=lambda m: method_avgs[m])
+        row += f"{best:>14}"
+        print(row)
 
 
 __all__ = [
@@ -507,13 +409,10 @@ __all__ = [
     "InvoiceScore",
     "match_exact",
     "match_fuzzy",
-    "match_amount",
-    "match_currency",
     "score_invoice",
     "load_ground_truth",
     "run_evaluation",
     "print_summary",
-    "CURRENCY_MAP",
     "FIELD_MATCHERS",
 ]
 

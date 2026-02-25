@@ -41,6 +41,7 @@ dev = [
     "pre-commit",
     "pytest",
     "pytest-cov",
+    "rapidfuzz>=3.14.3",
     "ruff",
     "types-openpyxl>=3.1.5.20250919",
 ]

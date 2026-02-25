@@ -5,11 +5,8 @@ from datetime import date
 import pytest
 
 from invoice_tracker.evaluation import (
-    CURRENCY_MAP,
     InvoiceScore,
     MatchResult,
-    match_amount,
-    match_currency,
     match_exact,
     match_fuzzy,
     score_invoice,
@@ -75,10 +72,7 @@ class TestMatchFuzzy:
     def test_similar_strings(self):
         """Similar strings should have meaningful similarity score."""
         result = match_fuzzy("Acme Corporation", "Acme Corp")
-        assert result.score >= 0.5  # Reasonable similarity
-        # More similar strings should score higher
-        result2 = match_fuzzy("Acme Corp", "Acme Cor")
-        assert result2.score > result.score
+        assert result.score >= 0.5
 
     def test_dissimilar_strings(self):
         """Very different strings should not match."""
@@ -114,122 +108,73 @@ class TestMatchFuzzy:
         assert result.score == 1.0
 
     def test_whitespace_handling(self):
-        """Whitespace should be stripped."""
+        """Whitespace should be handled gracefully."""
         result = match_fuzzy("  Acme Corp  ", "Acme Corp")
         assert result.matched is True
         assert result.score == 1.0
 
-
-class TestMatchAmount:
-    """Tests for match_amount function."""
-
-    def test_exact_match(self):
-        """Identical amounts should match."""
-        result = match_amount(1234.56, 1234.56)
+    def test_missing_middle_name(self):
+        """Token set ratio should handle missing tokens gracefully."""
+        result = match_fuzzy("John Michael Doe", "John Doe")
         assert result.matched is True
-        assert result.score == 1.0
+        assert result.score >= 0.85
 
-    def test_within_absolute_tolerance(self):
-        """Amounts within absolute tolerance should match."""
-        result = match_amount(1234.56, 1234.57, abs_tolerance=0.01)
-        assert result.matched is True
-        assert result.score == 1.0
-
-    def test_within_relative_tolerance(self):
-        """Amounts within relative tolerance should match."""
-        result = match_amount(1000.0, 1001.0, rel_tolerance=0.002)
-        assert result.matched is True
-        assert result.score == 1.0
-
-    def test_outside_tolerance(self):
-        """Amounts outside both tolerances should not match."""
-        result = match_amount(1000.0, 1100.0, abs_tolerance=0.01, rel_tolerance=0.001)
-        assert result.matched is False
-        assert result.score == 0.0
-
-    def test_both_none(self):
-        """Both None values should match."""
-        result = match_amount(None, None)
-        assert result.matched is True
-        assert result.score == 1.0
-
-    def test_extracted_none(self):
-        """Extracted None should not match expected value."""
-        result = match_amount(None, 1234.56)
-        assert result.matched is False
-        assert result.score == 0.0
-
-    def test_zero_expected(self):
-        """Zero expected amount should handle division safely."""
-        result = match_amount(0.005, 0.0, abs_tolerance=0.01)
+    def test_reordered_tokens(self):
+        """Token set ratio should handle reordered tokens."""
+        result = match_fuzzy("Corp Acme", "Acme Corp")
         assert result.matched is True
         assert result.score == 1.0
 
 
-class TestMatchCurrency:
-    """Tests for match_currency function."""
+class TestCurrencyNormalization:
+    """Tests for currency normalization on InvoiceData."""
 
-    def test_exact_code_match(self):
-        """Identical currency codes should match."""
-        result = match_currency("EUR", "EUR")
-        assert result.matched is True
-        assert result.score == 1.0
+    @pytest.fixture
+    def _base_invoice_kwargs(self) -> dict:
+        """Base kwargs for creating InvoiceData without currency."""
+        return {
+            "party": "Test",
+            "invoice_id": "INV-1",
+            "issue_date": date(2024, 1, 1),
+            "due_date": date(2024, 2, 1),
+            "amount": 100.0,
+            "recipient": "Recipient",
+        }
 
-    def test_symbol_to_code(self):
-        """Currency symbols should normalize to codes."""
-        result = match_currency("EUR", "EUR")
-        assert result.matched is True
+    def test_euro_symbol_normalized(self, _base_invoice_kwargs):
+        """Euro symbol should be normalized to EUR."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency="€")
+        assert invoice.currency == "EUR"
 
-    def test_euro_symbol(self):
-        """Euro symbol should match EUR code."""
-        assert CURRENCY_MAP["€"] == "EUR"
-        result = match_currency("€", "EUR")
-        assert result.matched is True
-        assert result.score == 1.0
+    def test_dollar_symbol_normalized(self, _base_invoice_kwargs):
+        """Dollar symbol should be normalized to USD."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency="$")
+        assert invoice.currency == "USD"
 
-    def test_dollar_symbol(self):
-        """Dollar symbol should match USD code."""
-        assert CURRENCY_MAP["$"] == "USD"
-        result = match_currency("$", "USD")
-        assert result.matched is True
-        assert result.score == 1.0
+    def test_pound_symbol_normalized(self, _base_invoice_kwargs):
+        """Pound symbol should be normalized to GBP."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency="£")
+        assert invoice.currency == "GBP"
 
-    def test_pound_symbol(self):
-        """Pound symbol should match GBP code."""
-        assert CURRENCY_MAP["£"] == "GBP"
-        result = match_currency("£", "GBP")
-        assert result.matched is True
-        assert result.score == 1.0
+    def test_yen_symbol_normalized(self, _base_invoice_kwargs):
+        """Yen symbol should be normalized to JPY."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency="¥")
+        assert invoice.currency == "JPY"
 
-    def test_case_insensitive(self):
-        """Currency codes should be case-insensitive."""
-        result = match_currency("eur", "EUR")
-        assert result.matched is True
-        assert result.score == 1.0
+    def test_iso_code_preserved(self, _base_invoice_kwargs):
+        """ISO code should pass through unchanged."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency="EUR")
+        assert invoice.currency == "EUR"
 
-    def test_mismatched_currencies(self):
-        """Different currencies should not match."""
-        result = match_currency("EUR", "USD")
-        assert result.matched is False
-        assert result.score == 0.0
+    def test_lowercase_uppercased(self, _base_invoice_kwargs):
+        """Lowercase currency codes should be uppercased."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency="eur")
+        assert invoice.currency == "EUR"
 
-    def test_both_none(self):
-        """Both None values should match."""
-        result = match_currency(None, None)
-        assert result.matched is True
-        assert result.score == 1.0
-
-    def test_extracted_none(self):
-        """Extracted None should not match expected value."""
-        result = match_currency(None, "EUR")
-        assert result.matched is False
-        assert result.score == 0.0
-
-    def test_whitespace_handling(self):
-        """Whitespace should be stripped."""
-        result = match_currency(" EUR ", "EUR")
-        assert result.matched is True
-        assert result.score == 1.0
+    def test_whitespace_stripped(self, _base_invoice_kwargs):
+        """Whitespace should be stripped from currency."""
+        invoice = InvoiceData(**_base_invoice_kwargs, currency=" EUR ")
+        assert invoice.currency == "EUR"
 
 
 class TestScoreInvoice:
@@ -284,16 +229,15 @@ class TestScoreInvoice:
 
     def test_fuzzy_party_matching(self, sample_extracted, sample_expected):
         """Party field should use fuzzy matching."""
-        sample_expected["party"] = "Acme Corp"  # Slightly different
+        sample_expected["party"] = "Acme Corp"
         result = score_invoice(sample_extracted, sample_expected, "test")
-        # Should still be a partial match due to fuzzy matching
         assert result.field_scores["party"].score > 0.5
 
-    def test_amount_tolerance(self, sample_extracted, sample_expected):
-        """Amount should match within tolerance."""
-        sample_expected["amount"] = 1234.565  # Tiny difference
+    def test_amount_exact_matching(self, sample_extracted, sample_expected):
+        """Amount uses exact matching — different values should not match."""
+        sample_expected["amount"] = 1234.565
         result = score_invoice(sample_extracted, sample_expected, "test")
-        assert result.field_scores["amount"].matched is True
+        assert result.field_scores["amount"].matched is False
 
 
 class TestInvoiceScoreDataclass:
