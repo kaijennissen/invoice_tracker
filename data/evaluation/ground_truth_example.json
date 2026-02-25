@@ -1,0 +1,38 @@
+[
+  {
+    "invoice_file": "invoices/invoice_001.pdf",
+    "expected": {
+      "party": "Acme Corporation",
+      "invoice_id": "INV-2024-00123",
+      "issue_date": "2024-01-15",
+      "due_date": "2024-02-15",
+      "amount": 1234.56,
+      "currency": "EUR",
+      "recipient": "John Doe"
+    }
+  },
+  {
+    "invoice_file": "invoices/invoice_002.pdf",
+    "expected": {
+      "party": "TechStart GmbH",
+      "invoice_id": "TS-2024-0042",
+      "issue_date": "2024-02-01",
+      "due_date": "2024-03-01",
+      "amount": 2499.99,
+      "currency": "EUR",
+      "recipient": "Jane Smith"
+    }
+  },
+  {
+    "invoice_file": "invoices/invoice_003.png",
+    "expected": {
+      "party": "CloudServices Inc.",
+      "invoice_id": "CS-00789",
+      "issue_date": "2024-03-10",
+      "due_date": "2024-04-10",
+      "amount": 599.00,
+      "currency": "USD",
+      "recipient": "Bob Wilson"
+    }
+  }
+]
