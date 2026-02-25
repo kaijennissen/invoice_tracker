@@ -1,10 +1,10 @@
 // Defining a data model.
 class InvoiceData {
   party string
-  invoice_id string 
+  invoice_id string
   issue_date string @description("ISO 8601 date format e.g., 2023-10-15")
   due_date string @description("ISO 8601 date format e.g., 2023-10-15")
-  amount float 
+  amount float
   currency string
   recipient string
 }
@@ -15,7 +15,11 @@ function ExtractInvoiceData(images: image[]) -> InvoiceData {
   // You can also use custom LLM params with a custom client name from clients.baml like "client CustomGPT5" or "client CustomSonnet4"
   client CustomOllama // Uses local Ollama instance.
   prompt #"
-    Extract invoice data from these images. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page.
+    Extract invoice data from these images. Be precise with dates (YYYY-MM-DD) and amounts (numeric only, no currency symbols). The total amount (Bruttobetrag) must be extracted with high precision. For multi-page documents, the total is typically on the last page.
+
+    If no explicit due date is given, calculate it from payment terms (e.g. "14 Tage" after issue date).
+    Recipient: omit salutations (Herr, Frau, Mr., Mrs., Dr., Prof.).
+    Party: use full name, expand abbreviations like MVZ to Medizinisches Versorgungszentrum.
 
     {% for img in images %}
     {{ img }}

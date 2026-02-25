@@ -35,7 +35,11 @@ log = structlog.get_logger()
 
 _EXTRACTION_RETRY = RetryConfig(max_retries=2, initial_backoff=1.0)
 
-EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page."""
+EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD) and amounts (numeric only, no currency symbols). The total amount (Bruttobetrag) must be extracted with high precision. For multi-page documents, the total is typically on the last page.
+
+If no explicit due date is given, calculate it from payment terms (e.g. "14 Tage" after issue date).
+Recipient: omit salutations (Herr, Frau, Mr., Mrs., Dr., Prof.).
+Party: use full name, expand abbreviations like MVZ to Medizinisches Versorgungszentrum."""
 
 
 @runtime_checkable
