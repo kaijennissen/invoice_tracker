@@ -66,6 +66,7 @@ markers = [
 target-version = "py313"
 line-length = 88
 src = ["src", "tests"]
+exclude = ["baml_client"]
 
 [tool.ruff.lint]
 select = [
