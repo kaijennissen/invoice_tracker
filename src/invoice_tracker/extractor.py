@@ -35,7 +35,14 @@ log = structlog.get_logger()
 
 _EXTRACTION_RETRY = RetryConfig(max_retries=2, initial_backoff=1.0)
 
-EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page."""
+EXTRACTION_PROMPT = """Extract invoice data from this image.
+
+Rules:
+- **Dates**: Use YYYY-MM-DD format. The invoice/issue date is always stated explicitly. The due date may NOT be stated directly — if only a payment term is given (e.g. "zahlbar innerhalb von 14 Tagen", "Zahlungsziel: 30 Tage"), calculate the due date by adding that duration to the invoice date.
+- **Amount**: This is the most critical field — extract the total amount with high precision. Use the final/gross total (Bruttobetrag / Gesamtbetrag). Numeric only, no currency symbols.
+- **Recipient**: Extract the invoice recipient (the person or entity being billed). Strip all formal salutations and titles such as Mr., Mrs., Herr, Frau, Dr., Prof. — return only the plain name.
+- **Party**: Extract the issuing party (company/practice name). Use the full standardized name — expand common German abbreviations (e.g. "MVZ" → "Medizinisches Versorgungszentrum", "GmbH" stays "GmbH"). Include the full legal entity name as printed.
+- For multi-page documents, the total amount is typically on the last page."""
 
 
 @runtime_checkable
