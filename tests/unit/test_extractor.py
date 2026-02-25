@@ -1,12 +1,17 @@
 """Tests for invoice_tracker.extractor module."""
 
+import base64
 from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import baml_py
 import pytest
+from baml_client import types as baml_types
 
 from invoice_tracker.extractor import (
+    _bytes_to_baml_image,
+    _convert_baml_result,
     _create_client,
     check_ollama_connection,
     extract_invoice,
@@ -247,6 +252,7 @@ class TestExtractInvoice:
             assert call_kwargs["format"] == InvoiceData.model_json_schema()
             assert call_kwargs["options"] == {"temperature": 0}
 
+
 class TestPdfToImages:
     """Tests for pdf_to_images function."""
 
@@ -408,3 +414,185 @@ class TestExtractInvoicePdf:
             images = call_kwargs["messages"][0]["images"]
             # Should have 2 images for 2-page PDF
             assert len(images) == 2
+
+
+class TestConvertBamlResult:
+    """Tests for _convert_baml_result function."""
+
+    def test_converts_baml_result_to_invoice_data(self) -> None:
+        """_convert_baml_result converts BAML types to application types."""
+        baml_result = baml_types.InvoiceData(
+            party="Test Corp",
+            invoice_id="INV-2024-001",
+            issue_date="2024-01-15",
+            due_date="2024-02-15",
+            amount=1234.56,
+            currency="EUR",
+            recipient="John Doe",
+        )
+
+        result = _convert_baml_result(baml_result)
+
+        assert isinstance(result, InvoiceData)
+        assert result.party == "Test Corp"
+        assert result.invoice_id == "INV-2024-001"
+        assert result.issue_date == date(2024, 1, 15)
+        assert result.due_date == date(2024, 2, 15)
+        assert result.amount == 1234.56
+        assert result.currency == "EUR"
+        assert result.recipient == "John Doe"
+
+    def test_preserves_currency(self) -> None:
+        """_convert_baml_result preserves currency value."""
+        baml_result = baml_types.InvoiceData(
+            party="Test Corp",
+            invoice_id="INV-2024-001",
+            issue_date="2024-01-15",
+            due_date="2024-02-15",
+            amount=1234.56,
+            currency="USD",
+            recipient="John Doe",
+        )
+
+        result = _convert_baml_result(baml_result)
+
+        assert result.currency == "USD"
+
+
+class TestBytesToBamlImage:
+    """Tests for _bytes_to_baml_image function."""
+
+    def test_converts_bytes_to_baml_image(self) -> None:
+        """_bytes_to_baml_image returns a BAML Image object."""
+        image_bytes = b"fake png content"
+
+        result = _bytes_to_baml_image(image_bytes)
+
+        assert isinstance(result, baml_py.Image)
+
+    def test_encodes_bytes_as_base64(self) -> None:
+        """_bytes_to_baml_image correctly encodes bytes."""
+        image_bytes = b"test image data"
+        expected_b64 = base64.b64encode(image_bytes).decode()
+
+        with patch("invoice_tracker.extractor.baml_py.Image.from_base64") as mock_from:
+            _bytes_to_baml_image(image_bytes)
+
+            mock_from.assert_called_once_with(
+                media_type="image/png",
+                base64=expected_b64,
+            )
+
+
+class TestExtractInvoiceBaml:
+    """Tests for extract_invoice with BAML backend."""
+
+    @pytest.fixture
+    def baml_settings(self) -> Settings:
+        """Create settings with BAML enabled.
+
+        Returns
+        -------
+        Settings
+            Settings instance with use_baml=True.
+        """
+        return Settings(_cli_parse_args=False, use_baml=True)
+
+    def test_uses_baml_when_enabled(
+        self, baml_settings: Settings, tmp_path: Path
+    ) -> None:
+        """extract_invoice uses BAML client when use_baml is True."""
+        image_path = tmp_path / "invoice.png"
+        image_path.write_bytes(b"dummy image content")
+
+        mock_baml_result = baml_types.InvoiceData(
+            party="BAML Corp",
+            invoice_id="BAML-001",
+            issue_date="2024-03-01",
+            due_date="2024-04-01",
+            amount=999.99,
+            currency="USD",
+            recipient="BAML User",
+        )
+
+        with patch("invoice_tracker.extractor.b.ExtractInvoiceData") as mock_baml:
+            mock_baml.return_value = mock_baml_result
+
+            result = extract_invoice(image_path, baml_settings)
+
+            assert result.party == "BAML Corp"
+            assert result.invoice_id == "BAML-001"
+            mock_baml.assert_called_once()
+
+    def test_baml_receives_correct_images(
+        self, baml_settings: Settings, tmp_path: Path
+    ) -> None:
+        """extract_invoice passes correct images to BAML."""
+        image_path = tmp_path / "invoice.png"
+        image_content = b"fake png content"
+        image_path.write_bytes(image_content)
+
+        mock_baml_result = baml_types.InvoiceData(
+            party="Test",
+            invoice_id="001",
+            issue_date="2024-01-01",
+            due_date="2024-02-01",
+            amount=100.0,
+            currency="EUR",
+            recipient="Test User",
+        )
+
+        with patch("invoice_tracker.extractor.b.ExtractInvoiceData") as mock_baml:
+            mock_baml.return_value = mock_baml_result
+
+            extract_invoice(image_path, baml_settings)
+
+            call_kwargs = mock_baml.call_args.kwargs
+            assert "images" in call_kwargs
+            assert len(call_kwargs["images"]) == 1
+
+    def test_baml_extraction_error_raises(
+        self, baml_settings: Settings, tmp_path: Path
+    ) -> None:
+        """extract_invoice raises ExtractionError on BAML failure."""
+        image_path = tmp_path / "invoice.png"
+        image_path.write_bytes(b"dummy content")
+
+        with patch("invoice_tracker.extractor.b.ExtractInvoiceData") as mock_baml:
+            mock_baml.side_effect = Exception("BAML API error")
+
+            with pytest.raises(ExtractionError, match="BAML extraction failed"):
+                extract_invoice(image_path, baml_settings)
+
+    def test_baml_handles_multipage_pdf(
+        self, baml_settings: Settings, tmp_path: Path
+    ) -> None:
+        """extract_invoice passes all PDF pages to BAML."""
+        pdf_path = tmp_path / "multipage.pdf"
+
+        import fitz
+
+        doc = fitz.open()
+        doc.new_page()
+        doc.new_page()
+        doc.new_page()
+        doc.save(pdf_path)
+        doc.close()
+
+        mock_baml_result = baml_types.InvoiceData(
+            party="Test",
+            invoice_id="001",
+            issue_date="2024-01-01",
+            due_date="2024-02-01",
+            amount=100.0,
+            currency="EUR",
+            recipient="Test User",
+        )
+
+        with patch("invoice_tracker.extractor.b.ExtractInvoiceData") as mock_baml:
+            mock_baml.return_value = mock_baml_result
+
+            extract_invoice(pdf_path, baml_settings)
+
+            call_kwargs = mock_baml.call_args.kwargs
+            assert len(call_kwargs["images"]) == 3
