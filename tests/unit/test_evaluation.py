@@ -224,7 +224,15 @@ class TestScoreInvoice:
     def test_all_fields_scored(self, sample_extracted, sample_expected):
         """All defined fields should be scored."""
         result = score_invoice(sample_extracted, sample_expected, "test")
-        expected_fields = {"party", "invoice_id", "issue_date", "due_date", "amount", "currency", "recipient"}
+        expected_fields = {
+            "party",
+            "invoice_id",
+            "issue_date",
+            "due_date",
+            "amount",
+            "currency",
+            "recipient",
+        }
         assert set(result.field_scores.keys()) == expected_fields
 
     def test_fuzzy_party_matching(self, sample_extracted, sample_expected):

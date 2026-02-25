@@ -560,9 +560,7 @@ class TestBamlExtractor:
 class TestCreateExtractor:
     """Tests for create_extractor factory function."""
 
-    def test_returns_ollama_extractor_by_default(
-        self, mock_settings: Settings
-    ) -> None:
+    def test_returns_ollama_extractor_by_default(self, mock_settings: Settings) -> None:
         """create_extractor returns OllamaExtractor when use_baml is False."""
         with patch("invoice_tracker.extractor.ollama.Client"):
             extractor = create_extractor(mock_settings)

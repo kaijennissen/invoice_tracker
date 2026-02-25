@@ -148,9 +148,7 @@ FIELD_MATCHERS: dict[str, Callable[..., MatchResult]] = {
 }
 
 
-def score_invoice(
-    extracted: InvoiceData, expected: dict, method: str
-) -> InvoiceScore:
+def score_invoice(extracted: InvoiceData, expected: dict, method: str) -> InvoiceScore:
     """Score an extracted invoice against ground truth.
 
     Parameters
@@ -249,9 +247,7 @@ def run_evaluation(
     results: dict[str, list[InvoiceScore]] = {}
 
     for method in methods:
-        eval_settings = settings.model_copy(
-            update={"use_baml": method == "baml"}
-        )
+        eval_settings = settings.model_copy(update={"use_baml": method == "baml"})
         method_scores: list[InvoiceScore] = []
 
         for entry in ground_truth:
@@ -332,7 +328,9 @@ def print_summary(results: dict[str, list[InvoiceScore]]) -> None:
         for field_name, field_scores in sorted(field_totals.items()):
             field_avg = sum(field_scores) / len(field_scores)
             matches = sum(1 for s in field_scores if s == 1.0)
-            print(f"    {field_name:12}: {field_avg:6.1%} ({matches}/{len(field_scores)} exact)")
+            print(
+                f"    {field_name:12}: {field_avg:6.1%} ({matches}/{len(field_scores)} exact)"
+            )
 
         # Individual invoice details
         print("\n  Per-invoice scores:")
@@ -367,9 +365,13 @@ def _print_method_comparison(results: dict[str, list[InvoiceScore]]) -> None:
     invoice_scores: dict[str, dict[str, float]] = {}
     for method, scores in results.items():
         for score in scores:
-            invoice_scores.setdefault(score.invoice_file, {})[method] = score.overall_score
+            invoice_scores.setdefault(score.invoice_file, {})[method] = (
+                score.overall_score
+            )
 
-    header = f"  {'Invoice':<30}" + "".join(f"{m:>15}" for m in methods) + f"{'Winner':>15}"
+    header = (
+        f"  {'Invoice':<30}" + "".join(f"{m:>15}" for m in methods) + f"{'Winner':>15}"
+    )
     print(header)
     print("  " + "-" * (len(header) - 2))
 
@@ -382,7 +384,9 @@ def _print_method_comparison(results: dict[str, list[InvoiceScore]]) -> None:
         print(row)
 
     # Per-field breakdown
-    print(f"\n  {'Field':<15}" + "".join(f"{m:>15}" for m in methods) + f"{'Winner':>15}")
+    print(
+        f"\n  {'Field':<15}" + "".join(f"{m:>15}" for m in methods) + f"{'Winner':>15}"
+    )
     print("  " + "-" * (15 + 15 * len(methods) + 15))
 
     # Collect field averages per method
