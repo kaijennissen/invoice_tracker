@@ -153,7 +153,7 @@ class TestSettings:
         assert test_settings.processed_dir == Path("./invoices/processed")
         assert test_settings.failed_dir == Path("./invoices/failed")
         assert test_settings.excel_file == Path("./data/tracker.xlsx")
-        assert test_settings.ollama_model == "ministral-3:14b"
+        assert test_settings.ollama_model == "gemma3:27b"
         assert test_settings.dry_run is False
         assert test_settings.verbose is False
 

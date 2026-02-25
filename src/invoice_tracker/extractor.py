@@ -7,14 +7,21 @@ logic layer and handles communication with the Ollama API.
 Provides both:
 - Module-level functions (extract_invoice, check_ollama_connection) for backward
   compatibility
-- ExtractionStrategy protocol and OllamaExtractor class for extensibility
+- ExtractionStrategy protocol and OllamaExtractor/BamlExtractor classes for
+  extensibility
 """
 
+import base64
+from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import baml_py
 import fitz
 import ollama
+import structlog
+from baml_client import b
+from baml_client import types as baml_types
 
 from invoice_tracker.retry import RetryConfig, with_retry
 from invoice_tracker.settings import (
@@ -23,6 +30,8 @@ from invoice_tracker.settings import (
     OllamaBackend,
     Settings,
 )
+
+log = structlog.get_logger()
 
 _EXTRACTION_RETRY = RetryConfig(max_retries=2, initial_backoff=1.0)
 
@@ -130,6 +139,52 @@ def pdf_to_images(pdf_path: Path) -> list[bytes]:
     return images
 
 
+def _convert_baml_result(baml_result: baml_types.InvoiceData) -> InvoiceData:
+    """Convert BAML InvoiceData (str dates) to Python InvoiceData (date objects).
+
+    BAML generates its own InvoiceData type with string dates. This function
+    converts to the application's InvoiceData with proper date objects.
+
+    Parameters
+    ----------
+    baml_result : baml_types.InvoiceData
+        BAML-generated invoice data with string dates.
+
+    Returns
+    -------
+    InvoiceData
+        Application invoice data with date objects.
+    """
+    return InvoiceData(
+        party=baml_result.party,
+        invoice_id=baml_result.invoice_id,
+        issue_date=date.fromisoformat(baml_result.issue_date),
+        due_date=date.fromisoformat(baml_result.due_date),
+        amount=baml_result.amount,
+        currency=baml_result.currency,
+        recipient=baml_result.recipient,
+    )
+
+
+def _bytes_to_baml_image(image_bytes: bytes) -> baml_py.Image:
+    """Convert raw PNG bytes to BAML Image object.
+
+    Parameters
+    ----------
+    image_bytes : bytes
+        Raw PNG image bytes.
+
+    Returns
+    -------
+    baml_py.Image
+        BAML Image object suitable for the BAML client.
+    """
+    return baml_py.Image.from_base64(
+        media_type="image/png",
+        base64=base64.b64encode(image_bytes).decode(),
+    )
+
+
 class OllamaExtractor:
     """Ollama-based invoice data extractor.
 
@@ -201,8 +256,74 @@ class OllamaExtractor:
             return False
 
 
-def create_extractor(settings: Settings) -> OllamaExtractor:
-    """Create the default extractor for the given settings.
+class BamlExtractor:
+    """BAML-based invoice data extractor.
+
+    Uses the BAML client for extraction with retry policy configured in
+    clients.baml.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings (used for logging context).
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    def extract(self, images: list[bytes]) -> InvoiceData:
+        """Extract invoice data from images via BAML.
+
+        Parameters
+        ----------
+        images : list[bytes]
+            One or more images as raw bytes.
+
+        Returns
+        -------
+        InvoiceData
+            Extracted and validated invoice data.
+
+        Raises
+        ------
+        ExtractionError
+            If extraction fails.
+        """
+        baml_images = [_bytes_to_baml_image(img) for img in images]
+
+        log.debug(
+            "baml_extraction_request",
+            num_images=len(baml_images),
+        )
+
+        try:
+            result = b.ExtractInvoiceData(images=baml_images)
+        except Exception as e:
+            raise ExtractionError(f"BAML extraction failed: {e}") from e
+
+        log.debug(
+            "baml_extraction_response",
+            party=result.party,
+            invoice_id=result.invoice_id,
+            amount=result.amount,
+            currency=result.currency,
+        )
+
+        return _convert_baml_result(result)
+
+    def check_connection(self) -> bool:
+        """Check if BAML backend is reachable.
+
+        Returns
+        -------
+        bool
+            Always True (BAML manages its own connectivity).
+        """
+        return True
+
+
+def create_extractor(settings: Settings) -> ExtractionStrategy:
+    """Create the appropriate extractor for the given settings.
 
     Parameters
     ----------
@@ -211,9 +332,11 @@ def create_extractor(settings: Settings) -> OllamaExtractor:
 
     Returns
     -------
-    OllamaExtractor
-        An Ollama-based extractor instance.
+    ExtractionStrategy
+        An extractor instance (BAML or Ollama based on settings.use_baml).
     """
+    if settings.use_baml:
+        return BamlExtractor(settings)
     return OllamaExtractor(settings)
 
 
@@ -240,18 +363,17 @@ def check_ollama_connection(settings: Settings) -> bool:
 
 
 def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
-    """Extract invoice data from an image or PDF using Ollama vision model.
+    """Extract invoice data from an image or PDF.
 
-    Uses the configured Ollama model to analyze the invoice image or PDF and
-    extract structured data. For PDFs, all pages are converted to images and
-    passed together.
+    Dispatches to either BAML or direct Ollama client based on settings.use_baml.
+    For PDFs, all pages are converted to images and passed together.
 
     Parameters
     ----------
     file_path : Path
         Path to the invoice image or PDF file.
     settings : Settings
-        Application settings containing Ollama configuration.
+        Application settings containing extraction configuration.
 
     Returns
     -------
@@ -274,7 +396,7 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
     else:
         images = [file_path.read_bytes()]
 
-    extractor = OllamaExtractor(settings)
+    extractor = create_extractor(settings)
 
     try:
         return extractor.extract(images)
@@ -285,6 +407,7 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
 
 
 __all__ = [
+    "BamlExtractor",
     "ExtractionStrategy",
     "OllamaExtractor",
     "create_extractor",
@@ -292,4 +415,6 @@ __all__ = [
     "extract_invoice",
     "pdf_to_images",
     "EXTRACTION_PROMPT",
+    "_convert_baml_result",
+    "_bytes_to_baml_image",
 ]
