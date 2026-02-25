@@ -11,8 +11,8 @@ from pathlib import Path
 
 import structlog
 
-from invoice_tracker.excel_handler import append_invoice, init_excel, invoice_exists
 from invoice_tracker.extractor import extract_invoice
+from invoice_tracker.repository import InvoiceRepository, create_repository
 from invoice_tracker.settings import (
     ExtractionError,
     InvoiceData,
@@ -105,7 +105,11 @@ def create_record(data: InvoiceData, source_file: Path) -> InvoiceRecord:
     )
 
 
-def process_single(file: Path, settings: Settings) -> ProcessingResult:
+def process_single(
+    file: Path,
+    settings: Settings,
+    repo: InvoiceRepository | None = None,
+) -> ProcessingResult:
     """Process a single invoice file.
 
     Performs the full pipeline: extract, validate, check duplicate, persist, move.
@@ -117,6 +121,8 @@ def process_single(file: Path, settings: Settings) -> ProcessingResult:
         Path to the invoice file.
     settings : Settings
         Application settings.
+    repo : InvoiceRepository | None
+        Repository for persistence. Created from settings if not provided.
 
     Returns
     -------
@@ -124,6 +130,9 @@ def process_single(file: Path, settings: Settings) -> ProcessingResult:
         Result of processing (success or failure with details).
     """
     log.info("processing_invoice", file=str(file))
+
+    if repo is None:
+        repo = create_repository(settings.excel_file)
 
     # Extract data
     try:
@@ -142,8 +151,8 @@ def process_single(file: Path, settings: Settings) -> ProcessingResult:
 
     # Check for duplicate
     if not settings.dry_run:
-        init_excel(settings.excel_file)
-        if invoice_exists(settings.excel_file, data.invoice_id):
+        repo.initialize()
+        if repo.exists(data.invoice_id):
             log.warning(
                 "duplicate_invoice",
                 file=str(file),
@@ -159,7 +168,7 @@ def process_single(file: Path, settings: Settings) -> ProcessingResult:
     # Create record and persist
     if not settings.dry_run:
         record = create_record(data, file)
-        append_invoice(settings.excel_file, record)
+        repo.save(record)
         log.info("invoice_persisted", file=str(file), invoice_id=data.invoice_id)
 
         # Move to processed directory
@@ -175,7 +184,10 @@ def process_single(file: Path, settings: Settings) -> ProcessingResult:
     )
 
 
-def process_batch(settings: Settings) -> list[ProcessingResult]:
+def process_batch(
+    settings: Settings,
+    repo: InvoiceRepository | None = None,
+) -> list[ProcessingResult]:
     """Process all invoice files in the incoming directory.
 
     Continues processing even if individual files fail.
@@ -184,6 +196,8 @@ def process_batch(settings: Settings) -> list[ProcessingResult]:
     ----------
     settings : Settings
         Application settings.
+    repo : InvoiceRepository | None
+        Repository for persistence. Created from settings if not provided.
 
     Returns
     -------
@@ -196,11 +210,14 @@ def process_batch(settings: Settings) -> list[ProcessingResult]:
         log.info("no_files_to_process")
         return []
 
+    if repo is None:
+        repo = create_repository(settings.excel_file)
+
     log.info("batch_processing_start", file_count=len(files))
 
     results = []
     for file in files:
-        result = process_single(file, settings)
+        result = process_single(file, settings, repo=repo)
         results.append(result)
 
     success_count = sum(1 for r in results if r.success)

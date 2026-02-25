@@ -8,16 +8,15 @@ Uses openpyxl for Excel file operations and derives headers from the
 InvoiceRecord model.
 """
 
-import time
 from pathlib import Path
+from typing import Any
 
 from openpyxl import Workbook, load_workbook
 
+from invoice_tracker.retry import RetryConfig, with_retry
 from invoice_tracker.settings import InvoiceRecord
 
-# Constants for retry logic
-MAX_RETRIES = 3
-INITIAL_BACKOFF_SECONDS = 0.5
+_EXCEL_RETRY = RetryConfig(max_retries=2, initial_backoff=0.5, catch=(PermissionError,))
 
 
 def _get_invoice_id_column_index() -> int:
@@ -55,6 +54,35 @@ def init_excel(path: Path) -> None:
     wb.save(path)
 
 
+@with_retry(_EXCEL_RETRY)
+def _save_workbook(path: Path, values: list[Any]) -> None:
+    """Load workbook, append values, and save.
+
+    Parameters
+    ----------
+    path : Path
+        Path to the Excel file.
+    values : list[Any]
+        Row values to append.
+
+    Raises
+    ------
+    PermissionError
+        If the file is locked.
+    ValueError
+        If the workbook has no active worksheet.
+    """
+    wb = load_workbook(path)
+    try:
+        ws = wb.active
+        if ws is None:
+            raise ValueError("Workbook has no active worksheet")
+        ws.append(values)
+        wb.save(path)
+    finally:
+        wb.close()
+
+
 def append_invoice(path: Path, record: InvoiceRecord) -> None:
     """Append invoice record to Excel file.
 
@@ -77,25 +105,7 @@ def append_invoice(path: Path, record: InvoiceRecord) -> None:
         If the workbook has no active worksheet.
     """
     values = list(record.model_dump().values())
-
-    for attempt in range(MAX_RETRIES):
-        try:
-            wb = load_workbook(path)
-            try:
-                ws = wb.active
-                if ws is None:
-                    raise ValueError("Workbook has no active worksheet")
-                ws.append(values)
-                wb.save(path)
-                return
-            finally:
-                wb.close()
-        except PermissionError:
-            if attempt < MAX_RETRIES - 1:
-                backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
-                time.sleep(backoff)
-            else:
-                raise
+    _save_workbook(path, values)
 
 
 def invoice_exists(path: Path, invoice_id: str) -> bool:

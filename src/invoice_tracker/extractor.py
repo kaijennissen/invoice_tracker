@@ -1,15 +1,20 @@
 """Invoice data extraction using Ollama vision models.
 
-This module provides functions to extract structured invoice data from images
-and PDFs using Ollama's vision capabilities. It is part of the core logic layer
-and handles communication with the Ollama API. Supports both direct Ollama client
-and BAML client for extraction.
+This module provides functions and classes to extract structured invoice data
+from images and PDFs using Ollama's vision capabilities. It is part of the core
+logic layer and handles communication with the Ollama API.
+
+Provides both:
+- Module-level functions (extract_invoice, check_ollama_connection) for backward
+  compatibility
+- ExtractionStrategy protocol and OllamaExtractor/BamlExtractor classes for
+  extensibility
 """
 
 import base64
-import time
 from datetime import date
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 import baml_py
 import fitz
@@ -18,6 +23,7 @@ import structlog
 from baml_client import b
 from baml_client import types as baml_types
 
+from invoice_tracker.retry import RetryConfig, with_retry
 from invoice_tracker.settings import (
     ExtractionError,
     InvoiceData,
@@ -25,13 +31,45 @@ from invoice_tracker.settings import (
     Settings,
 )
 
-log = structlog.get_logger(level="debug")
+log = structlog.get_logger()
 
-# Retry settings
-MAX_RETRIES = 2
-INITIAL_BACKOFF_SECONDS = 1.0
+_EXTRACTION_RETRY = RetryConfig(max_retries=2, initial_backoff=1.0)
 
 EXTRACTION_PROMPT = """Extract invoice data from this image. Be precise with dates (YYYY-MM-DD format) and amounts (numeric only, no currency symbols). For multi-page documents, the total amount is typically on the last page."""
+
+
+@runtime_checkable
+class ExtractionStrategy(Protocol):
+    """Protocol for invoice data extraction backends.
+
+    Implementations receive raw image bytes (not file paths) so that
+    file I/O stays in the caller.
+    """
+
+    def extract(self, images: list[bytes]) -> InvoiceData:
+        """Extract invoice data from images.
+
+        Parameters
+        ----------
+        images : list[bytes]
+            One or more images as raw bytes.
+
+        Returns
+        -------
+        InvoiceData
+            Extracted and validated invoice data.
+        """
+        ...
+
+    def check_connection(self) -> bool:
+        """Check whether the backend is reachable.
+
+        Returns
+        -------
+        bool
+            True if the backend is available.
+        """
+        ...
 
 
 def _create_client(settings: Settings) -> ollama.Client:
@@ -147,129 +185,162 @@ def _bytes_to_baml_image(image_bytes: bytes) -> baml_py.Image:
     )
 
 
-def _extract_invoice_baml(images: list[bytes], file_path: Path) -> InvoiceData:
-    """Extract invoice data using BAML client.
+class OllamaExtractor:
+    """Ollama-based invoice data extractor.
 
-    Retries are handled by the BAML retry policy configured in clients.baml.
-
-    Parameters
-    ----------
-    images : list[bytes]
-        List of PNG images as raw bytes.
-    file_path : Path
-        Original file path (used for logging).
-
-    Returns
-    -------
-    InvoiceData
-        Extracted and validated invoice data.
-
-    Raises
-    ------
-    ExtractionError
-        If extraction fails.
-    """
-    baml_images = [_bytes_to_baml_image(img) for img in images]
-
-    log.debug(
-        "baml_extraction_request",
-        file=str(file_path),
-        num_images=len(baml_images),
-    )
-
-    try:
-        result = b.ExtractInvoiceData(images=baml_images)
-    except Exception as e:
-        raise ExtractionError(f"BAML extraction failed: {e}") from e
-
-    log.debug(
-        "baml_extraction_response",
-        file=str(file_path),
-        party=result.party,
-        invoice_id=result.invoice_id,
-        amount=result.amount,
-        currency=result.currency,
-    )
-
-    return _convert_baml_result(result)
-
-
-def _extract_invoice_ollama(images: list[bytes], settings: Settings) -> InvoiceData:
-    """Extract invoice data using direct Ollama client.
-
-    Implements retry logic with exponential backoff.
+    Wraps the Ollama API with retry logic and structured output parsing.
 
     Parameters
     ----------
-    images : list[bytes]
-        List of PNG images as raw bytes.
     settings : Settings
         Application settings containing Ollama configuration.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+        self._client = _create_client(settings)
+
+    @with_retry(_EXTRACTION_RETRY)
+    def extract(self, images: list[bytes]) -> InvoiceData:
+        """Extract invoice data from images via Ollama.
+
+        Parameters
+        ----------
+        images : list[bytes]
+            One or more images as raw bytes.
+
+        Returns
+        -------
+        InvoiceData
+            Extracted and validated invoice data.
+
+        Raises
+        ------
+        ExtractionError
+            If the response is empty.
+        """
+        response = self._client.chat(
+            model=self._settings.ollama_model,
+            messages=[
+                {
+                    "role": "user",
+                    "content": EXTRACTION_PROMPT,
+                    "images": images,
+                }
+            ],
+            format=InvoiceData.model_json_schema(),
+            options={"temperature": 0},
+        )
+
+        content = response.message.content
+        if content is None:
+            raise ExtractionError("Empty response from Ollama")
+
+        return InvoiceData.model_validate_json(content)
+
+    def check_connection(self) -> bool:
+        """Check if Ollama is reachable and the model is available.
+
+        Returns
+        -------
+        bool
+            True if Ollama is reachable (and model available for local).
+        """
+        try:
+            if self._settings.ollama_backend == OllamaBackend.CLOUD:
+                return True
+            models = self._client.list()
+            model_names = [m.model for m in models.models]
+            return self._settings.ollama_model in model_names
+        except Exception:
+            return False
+
+
+class BamlExtractor:
+    """BAML-based invoice data extractor.
+
+    Uses the BAML client for extraction with retry policy configured in
+    clients.baml.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings (used for logging context).
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._settings = settings
+
+    def extract(self, images: list[bytes]) -> InvoiceData:
+        """Extract invoice data from images via BAML.
+
+        Parameters
+        ----------
+        images : list[bytes]
+            One or more images as raw bytes.
+
+        Returns
+        -------
+        InvoiceData
+            Extracted and validated invoice data.
+
+        Raises
+        ------
+        ExtractionError
+            If extraction fails.
+        """
+        baml_images = [_bytes_to_baml_image(img) for img in images]
+
+        log.debug(
+            "baml_extraction_request",
+            num_images=len(baml_images),
+        )
+
+        try:
+            result = b.ExtractInvoiceData(images=baml_images)
+        except Exception as e:
+            raise ExtractionError(f"BAML extraction failed: {e}") from e
+
+        log.debug(
+            "baml_extraction_response",
+            party=result.party,
+            invoice_id=result.invoice_id,
+            amount=result.amount,
+            currency=result.currency,
+        )
+
+        return _convert_baml_result(result)
+
+    def check_connection(self) -> bool:
+        """Check if BAML backend is reachable.
+
+        Returns
+        -------
+        bool
+            Always True (BAML manages its own connectivity).
+        """
+        return True
+
+
+def create_extractor(settings: Settings) -> ExtractionStrategy:
+    """Create the appropriate extractor for the given settings.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings.
 
     Returns
     -------
-    InvoiceData
-        Extracted and validated invoice data.
-
-    Raises
-    ------
-    ExtractionError
-        If extraction fails after all retries.
+    ExtractionStrategy
+        An extractor instance (BAML or Ollama based on settings.use_baml).
     """
-    client = _create_client(settings)
-    last_error: Exception | None = None
+    if settings.use_baml:
+        return BamlExtractor(settings)
+    return OllamaExtractor(settings)
 
-    for attempt in range(MAX_RETRIES + 1):
-        try:
-            log.debug(
-                "ollama_extraction_request",
-                model=settings.ollama_model,
-                num_images=len(images),
-                attempt=attempt + 1,
-            )
 
-            response = client.chat(
-                model=settings.ollama_model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": EXTRACTION_PROMPT,
-                        "images": images,
-                    }
-                ],
-                format=InvoiceData.model_json_schema(),
-                options={"temperature": 0},
-            )
-
-            content = response.message.content
-            if content is None:
-                raise ExtractionError("Empty response from Ollama")
-
-            result = InvoiceData.model_validate_json(content)
-
-            log.debug(
-                "ollama_extraction_response",
-                party=result.party,
-                invoice_id=result.invoice_id,
-                amount=result.amount,
-                currency=result.currency,
-            )
-
-            return result
-
-        except Exception as e:
-            last_error = e
-            if attempt < MAX_RETRIES:
-                backoff = INITIAL_BACKOFF_SECONDS * (2**attempt)
-                log.debug(
-                    "ollama_extraction_retry",
-                    attempt=attempt + 1,
-                    backoff_seconds=backoff,
-                    error=str(e),
-                )
-                time.sleep(backoff)
-
-    raise ExtractionError(f"Failed to extract invoice data: {last_error}")
+# --- Backward-compatible module-level functions ---
 
 
 def check_ollama_connection(settings: Settings) -> bool:
@@ -288,16 +359,7 @@ def check_ollama_connection(settings: Settings) -> bool:
     bool
         True if Ollama is reachable (and model available for local), False otherwise.
     """
-    try:
-        client = _create_client(settings)
-        if settings.ollama_backend == OllamaBackend.CLOUD:
-            # Cloud doesn't support model listing - assume available
-            return True
-        models = client.list()
-        model_names = [m.model for m in models.models]
-        return settings.ollama_model in model_names
-    except Exception:
-        return False
+    return OllamaExtractor(settings).check_connection()
 
 
 def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
@@ -334,20 +396,21 @@ def extract_invoice(file_path: Path, settings: Settings) -> InvoiceData:
     else:
         images = [file_path.read_bytes()]
 
-    log.debug(
-        "extraction_start",
-        file=str(file_path),
-        num_images=len(images),
-        use_baml=settings.use_baml,
-    )
+    extractor = create_extractor(settings)
 
-    if settings.use_baml:
-        return _extract_invoice_baml(images, file_path)
-    else:
-        return _extract_invoice_ollama(images, settings)
+    try:
+        return extractor.extract(images)
+    except ExtractionError:
+        raise
+    except Exception as e:
+        raise ExtractionError(f"Failed to extract invoice data: {e}") from e
 
 
 __all__ = [
+    "BamlExtractor",
+    "ExtractionStrategy",
+    "OllamaExtractor",
+    "create_extractor",
     "check_ollama_connection",
     "extract_invoice",
     "pdf_to_images",

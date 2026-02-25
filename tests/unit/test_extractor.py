@@ -10,10 +10,14 @@ import pytest
 from baml_client import types as baml_types
 
 from invoice_tracker.extractor import (
+    BamlExtractor,
+    ExtractionStrategy,
+    OllamaExtractor,
     _bytes_to_baml_image,
     _convert_baml_result,
     _create_client,
     check_ollama_connection,
+    create_extractor,
     extract_invoice,
     pdf_to_images,
 )
@@ -225,11 +229,29 @@ class TestExtractInvoice:
                 mock_response,
             ]
 
-            with patch("invoice_tracker.extractor.time.sleep"):
+            with patch("invoice_tracker.retry.time.sleep"):
                 result = extract_invoice(image_path, mock_settings)
 
                 assert isinstance(result, InvoiceData)
                 assert mock_client.return_value.chat.call_count == 3
+
+    def test_exception_chaining_preserves_cause(
+        self, mock_settings: Settings, tmp_path: Path
+    ) -> None:
+        """extract_invoice chains the original exception as __cause__."""
+        image_path = tmp_path / "invoice.png"
+        image_path.write_bytes(b"dummy image content")
+
+        original_error = ValueError("bad json")
+
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            mock_client.return_value.chat.side_effect = original_error
+
+            with patch("invoice_tracker.retry.time.sleep"):
+                with pytest.raises(ExtractionError) as exc_info:
+                    extract_invoice(image_path, mock_settings)
+
+                assert exc_info.value.__cause__ is original_error
 
     def test_calls_ollama_with_correct_parameters(
         self, mock_settings: Settings, tmp_path: Path, sample_invoice_json: str
@@ -414,6 +436,141 @@ class TestExtractInvoicePdf:
             images = call_kwargs["messages"][0]["images"]
             # Should have 2 images for 2-page PDF
             assert len(images) == 2
+
+
+class TestOllamaExtractor:
+    """Tests for OllamaExtractor class."""
+
+    def test_extract_success(
+        self, mock_settings: Settings, sample_invoice_json: str
+    ) -> None:
+        """OllamaExtractor.extract returns InvoiceData on success."""
+        mock_response = MagicMock()
+        mock_response.message.content = sample_invoice_json
+
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            mock_client.return_value.chat.return_value = mock_response
+
+            extractor = OllamaExtractor(mock_settings)
+            result = extractor.extract([b"dummy image"])
+
+            assert isinstance(result, InvoiceData)
+            assert result.party == "Test Corp"
+
+    def test_extract_raises_on_empty_response(self, mock_settings: Settings) -> None:
+        """OllamaExtractor.extract raises ExtractionError on empty response."""
+        mock_response = MagicMock()
+        mock_response.message.content = None
+
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            mock_client.return_value.chat.return_value = mock_response
+
+            extractor = OllamaExtractor(mock_settings)
+
+            with pytest.raises(ExtractionError, match="Empty response"):
+                extractor.extract([b"dummy image"])
+
+    def test_check_connection_returns_true(self, mock_settings: Settings) -> None:
+        """OllamaExtractor.check_connection returns True when model available."""
+        mock_model = MagicMock()
+        mock_model.model = mock_settings.ollama_model
+        mock_models_response = MagicMock()
+        mock_models_response.models = [mock_model]
+
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            mock_client.return_value.list.return_value = mock_models_response
+
+            extractor = OllamaExtractor(mock_settings)
+            assert extractor.check_connection() is True
+
+    def test_check_connection_returns_false_on_error(
+        self, mock_settings: Settings
+    ) -> None:
+        """OllamaExtractor.check_connection returns False on error."""
+        with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
+            mock_client.return_value.list.side_effect = Exception("fail")
+
+            extractor = OllamaExtractor(mock_settings)
+            assert extractor.check_connection() is False
+
+    def test_implements_protocol(self, mock_settings: Settings) -> None:
+        """OllamaExtractor satisfies the ExtractionStrategy protocol."""
+        with patch("invoice_tracker.extractor.ollama.Client"):
+            extractor = OllamaExtractor(mock_settings)
+            assert isinstance(extractor, ExtractionStrategy)
+
+
+class TestBamlExtractor:
+    """Tests for BamlExtractor class."""
+
+    @pytest.fixture
+    def baml_settings(self) -> Settings:
+        """Create settings with BAML enabled.
+
+        Returns
+        -------
+        Settings
+            Settings instance with use_baml=True.
+        """
+        return Settings(_cli_parse_args=False, use_baml=True)
+
+    def test_extract_success(self, baml_settings: Settings) -> None:
+        """BamlExtractor.extract returns InvoiceData on success."""
+        mock_baml_result = baml_types.InvoiceData(
+            party="BAML Corp",
+            invoice_id="BAML-001",
+            issue_date="2024-03-01",
+            due_date="2024-04-01",
+            amount=999.99,
+            currency="USD",
+            recipient="BAML User",
+        )
+
+        with patch("invoice_tracker.extractor.b.ExtractInvoiceData") as mock_baml:
+            mock_baml.return_value = mock_baml_result
+
+            extractor = BamlExtractor(baml_settings)
+            result = extractor.extract([b"dummy image"])
+
+            assert isinstance(result, InvoiceData)
+            assert result.party == "BAML Corp"
+            assert result.invoice_id == "BAML-001"
+
+    def test_extract_raises_on_failure(self, baml_settings: Settings) -> None:
+        """BamlExtractor.extract raises ExtractionError on failure."""
+        with patch("invoice_tracker.extractor.b.ExtractInvoiceData") as mock_baml:
+            mock_baml.side_effect = Exception("BAML API error")
+
+            extractor = BamlExtractor(baml_settings)
+
+            with pytest.raises(ExtractionError, match="BAML extraction failed"):
+                extractor.extract([b"dummy image"])
+
+    def test_implements_protocol(self, baml_settings: Settings) -> None:
+        """BamlExtractor satisfies the ExtractionStrategy protocol."""
+        extractor = BamlExtractor(baml_settings)
+        assert isinstance(extractor, ExtractionStrategy)
+
+    def test_check_connection_returns_true(self, baml_settings: Settings) -> None:
+        """BamlExtractor.check_connection always returns True."""
+        extractor = BamlExtractor(baml_settings)
+        assert extractor.check_connection() is True
+
+
+class TestCreateExtractor:
+    """Tests for create_extractor factory function."""
+
+    def test_returns_ollama_extractor_by_default(self, mock_settings: Settings) -> None:
+        """create_extractor returns OllamaExtractor when use_baml is False."""
+        with patch("invoice_tracker.extractor.ollama.Client"):
+            extractor = create_extractor(mock_settings)
+            assert isinstance(extractor, OllamaExtractor)
+
+    def test_returns_baml_extractor_when_enabled(self) -> None:
+        """create_extractor returns BamlExtractor when use_baml is True."""
+        settings = Settings(_cli_parse_args=False, use_baml=True)
+        extractor = create_extractor(settings)
+        assert isinstance(extractor, BamlExtractor)
 
 
 class TestConvertBamlResult:
