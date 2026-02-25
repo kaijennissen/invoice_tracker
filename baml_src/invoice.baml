@@ -15,14 +15,11 @@ function ExtractInvoiceData(images: image[]) -> InvoiceData {
   // You can also use custom LLM params with a custom client name from clients.baml like "client CustomGPT5" or "client CustomSonnet4"
   client CustomOllama // Uses local Ollama instance.
   prompt #"
-    Extract invoice data from these images.
+    Extract invoice data from these images. Be precise with dates (YYYY-MM-DD) and amounts (numeric only, no currency symbols). The total amount (Bruttobetrag) must be extracted with high precision. For multi-page documents, the total is typically on the last page.
 
-    Rules:
-    - **Dates**: Use YYYY-MM-DD format. The invoice/issue date is always stated explicitly. The due date may NOT be stated directly — if only a payment term is given (e.g. "zahlbar innerhalb von 14 Tagen", "Zahlungsziel: 30 Tage"), calculate the due date by adding that duration to the invoice date.
-    - **Amount**: This is the most critical field — extract the total amount with high precision. Use the final/gross total (Bruttobetrag / Gesamtbetrag). Numeric only, no currency symbols.
-    - **Recipient**: Extract the invoice recipient (the person or entity being billed). Strip all formal salutations and titles such as Mr., Mrs., Herr, Frau, Dr., Prof. — return only the plain name.
-    - **Party**: Extract the issuing party (company/practice name). Use the full standardized name — expand common German abbreviations (e.g. "MVZ" → "Medizinisches Versorgungszentrum", "GmbH" stays "GmbH"). Include the full legal entity name as printed.
-    - For multi-page documents, the total amount is typically on the last page.
+    If no explicit due date is given, calculate it from payment terms (e.g. "14 Tage" after issue date).
+    Recipient: omit salutations (Herr, Frau, Mr., Mrs., Dr., Prof.).
+    Party: use full name, expand abbreviations like MVZ to Medizinisches Versorgungszentrum.
 
     {% for img in images %}
     {{ img }}
