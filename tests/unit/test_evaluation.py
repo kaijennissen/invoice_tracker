@@ -1,17 +1,23 @@
 """Tests for the evaluation module."""
 
+import json
 from datetime import date
+from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
 from invoice_tracker.evaluation import (
     InvoiceScore,
     MatchResult,
+    _is_valid_combo,
+    _print_matrix,
     match_exact,
     match_fuzzy,
+    run_evaluation,
     score_invoice,
 )
-from invoice_tracker.settings import InvoiceData
+from invoice_tracker.settings import InvoiceData, Settings
 
 
 class TestMatchExact:
@@ -283,3 +289,139 @@ class TestMatchResultDataclass:
         assert result.matched is True
         assert result.score == 0.95
         assert result.details == "Test details"
+
+
+class TestIsValidCombo:
+    """Tests for _is_valid_combo helper."""
+
+    def test_baml_with_local_model(self):
+        assert _is_valid_combo("baml", "gemma3:27b") is True
+
+    def test_structured_outputs_with_local_model(self):
+        assert _is_valid_combo("structured_outputs", "qwen2.5:14b") is True
+
+    def test_baml_with_any_model(self):
+        assert _is_valid_combo("baml", "llama3:8b") is True
+
+
+class TestRunEvaluationCompositeKeys:
+    """Tests for run_evaluation with multi-model support."""
+
+    @pytest.fixture
+    def ground_truth_dir(self, tmp_path: Path) -> Path:
+        """Create a temp directory with ground truth and a dummy invoice."""
+        gt = [
+            {
+                "invoice_file": "test.pdf",
+                "expected": {
+                    "party": "Acme Corp",
+                    "invoice_id": "INV-001",
+                    "issue_date": "2024-01-15",
+                    "due_date": "2024-02-15",
+                    "amount": 100.0,
+                    "currency": "EUR",
+                    "recipient": "John Doe",
+                },
+            }
+        ]
+        gt_path = tmp_path / "ground_truth.json"
+        gt_path.write_text(json.dumps(gt))
+        # Create a dummy invoice file
+        (tmp_path / "test.pdf").write_bytes(b"dummy")
+        return gt_path
+
+    @pytest.fixture
+    def settings(self) -> Settings:
+        return Settings(_cli_parse_args=False)
+
+    def _fake_extract(self, file_path, settings):
+        return InvoiceData(
+            party="Acme Corp",
+            invoice_id="INV-001",
+            issue_date=date(2024, 1, 15),
+            due_date=date(2024, 2, 15),
+            amount=100.0,
+            currency="EUR",
+            recipient="John Doe",
+        )
+
+    def test_composite_keys_single_model(self, ground_truth_dir, settings):
+        """Single model should produce composite keys."""
+        with patch(
+            "invoice_tracker.evaluation.extract_invoice", side_effect=self._fake_extract
+        ):
+            results = run_evaluation(
+                ground_truth_dir,
+                methods=["baml"],
+                settings=settings,
+                models=["gemma3:27b"],
+            )
+        assert "baml/gemma3:27b" in results
+        assert len(results["baml/gemma3:27b"]) == 1
+
+    def test_composite_keys_cross_product(self, ground_truth_dir, settings):
+        """Multiple methods x models should produce full cross-product."""
+        with patch(
+            "invoice_tracker.evaluation.extract_invoice", side_effect=self._fake_extract
+        ):
+            results = run_evaluation(
+                ground_truth_dir,
+                methods=["structured_outputs", "baml"],
+                settings=settings,
+                models=["gemma3:27b", "qwen2.5:14b"],
+            )
+        expected_keys = {
+            "structured_outputs/gemma3:27b",
+            "structured_outputs/qwen2.5:14b",
+            "baml/gemma3:27b",
+            "baml/qwen2.5:14b",
+        }
+        assert set(results.keys()) == expected_keys
+
+    def test_default_models_uses_settings(self, ground_truth_dir, settings):
+        """When models is None, should use settings.ollama_model."""
+        with patch(
+            "invoice_tracker.evaluation.extract_invoice", side_effect=self._fake_extract
+        ):
+            results = run_evaluation(
+                ground_truth_dir,
+                methods=["baml"],
+                settings=settings,
+            )
+        assert f"baml/{settings.ollama_model}" in results
+
+
+class TestPrintMatrix:
+    """Tests for _print_matrix output formatting."""
+
+    def test_matrix_output(self, capsys):
+        """Matrix should display models as rows, methods as columns."""
+        results = {
+            "baml/gemma3:27b": [InvoiceScore("test.pdf", "baml/gemma3:27b", 0.9)],
+            "structured_outputs/gemma3:27b": [
+                InvoiceScore("test.pdf", "structured_outputs/gemma3:27b", 0.8)
+            ],
+            "baml/qwen2.5:14b": [InvoiceScore("test.pdf", "baml/qwen2.5:14b", 0.85)],
+            "structured_outputs/qwen2.5:14b": [
+                InvoiceScore("test.pdf", "structured_outputs/qwen2.5:14b", 0.75)
+            ],
+        }
+        _print_matrix(results)
+        output = capsys.readouterr().out
+
+        assert "EVALUATION MATRIX" in output
+        assert "gemma3:27b" in output
+        assert "qwen2.5:14b" in output
+        assert "baml" in output
+        assert "structured_outputs" in output
+        assert "90.0%" in output
+        assert "80.0%" in output
+
+    def test_matrix_empty_scores(self, capsys):
+        """Matrix should handle empty score lists gracefully."""
+        results = {
+            "baml/gemma3:27b": [],
+        }
+        _print_matrix(results)
+        output = capsys.readouterr().out
+        assert "0.0%" in output

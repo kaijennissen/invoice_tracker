@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import baml_py
+import baml_py.baml_py
 import fitz
 import ollama
 import structlog
@@ -270,6 +271,19 @@ class BamlExtractor:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        model = settings.ollama_model
+        cr = baml_py.baml_py.ClientRegistry()
+        cr.add_llm_client(
+            name="DynamicClient",
+            provider="openai-generic",
+            options={
+                "base_url": "http://localhost:11434/v1",
+                "model": model,
+                "default_role": "user",
+            },
+        )
+        cr.set_primary("DynamicClient")
+        self._client_registry = cr
 
     def extract(self, images: list[bytes]) -> InvoiceData:
         """Extract invoice data from images via BAML.
@@ -297,7 +311,10 @@ class BamlExtractor:
         )
 
         try:
-            result = b.ExtractInvoiceData(images=baml_images)
+            result = b.ExtractInvoiceData(
+                images=baml_images,
+                baml_options={"client_registry": self._client_registry},
+            )
         except Exception as e:
             raise ExtractionError(f"BAML extraction failed: {e}") from e
 

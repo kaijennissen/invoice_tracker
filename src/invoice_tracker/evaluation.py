@@ -4,6 +4,7 @@ This module provides tools to evaluate and compare BAML vs Structured Outputs
 extraction methods against ground truth data.
 """
 
+import itertools
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -220,12 +221,32 @@ def load_ground_truth(ground_truth_path: Path) -> list[dict]:
         return json.load(f)
 
 
+def _is_valid_combo(method: str, model: str) -> bool:
+    """Check whether a method/model combination is valid.
+
+    Parameters
+    ----------
+    method : str
+        Extraction method name.
+    model : str
+        Model identifier.
+
+    Returns
+    -------
+    bool
+        True if the combination can be evaluated.
+    """
+    # All local Ollama models work with both methods
+    return True
+
+
 def run_evaluation(
     ground_truth_path: Path,
     methods: list[str],
     settings: Settings,
+    models: list[str] | None = None,
 ) -> dict[str, list[InvoiceScore]]:
-    """Run evaluation across all ground truth invoices and methods.
+    """Run evaluation across all ground truth invoices, methods, and models.
 
     Parameters
     ----------
@@ -235,20 +256,32 @@ def run_evaluation(
         Extraction methods to evaluate ("baml", "structured_outputs").
     settings : Settings
         Application settings.
+    models : list[str] | None
+        Models to evaluate. Defaults to [settings.ollama_model].
 
     Returns
     -------
     dict[str, list[InvoiceScore]]
-        Results keyed by method name.
+        Results keyed by composite "method/model" key.
     """
+    if models is None:
+        models = [settings.ollama_model]
+
     ground_truth = load_ground_truth(ground_truth_path)
     base_dir = ground_truth_path.parent
 
     results: dict[str, list[InvoiceScore]] = {}
 
-    for method in methods:
-        eval_settings = settings.model_copy(update={"use_baml": method == "baml"})
-        method_scores: list[InvoiceScore] = []
+    for method, model in itertools.product(methods, models):
+        if not _is_valid_combo(method, model):
+            log.info("skipping_invalid_combo", method=method, model=model)
+            continue
+
+        combo_key = f"{method}/{model}"
+        eval_settings = settings.model_copy(
+            update={"use_baml": method == "baml", "ollama_model": model}
+        )
+        combo_scores: list[InvoiceScore] = []
 
         for entry in ground_truth:
             invoice_path = base_dir / entry["invoice_file"]
@@ -259,22 +292,24 @@ def run_evaluation(
                     "extracting_invoice",
                     file=str(invoice_path),
                     method=method,
+                    model=model,
                 )
                 extracted = extract_invoice(invoice_path, eval_settings)
-                score = score_invoice(extracted, expected, method)
+                score = score_invoice(extracted, expected, combo_key)
                 score.invoice_file = entry["invoice_file"]
-                method_scores.append(score)
+                combo_scores.append(score)
 
             except Exception as e:
                 log.error(
                     "extraction_failed",
                     file=str(invoice_path),
                     method=method,
+                    model=model,
                     error=str(e),
                 )
                 failed_score = InvoiceScore(
                     invoice_file=entry["invoice_file"],
-                    method=method,
+                    method=combo_key,
                     overall_score=0.0,
                     field_scores={
                         f: MatchResult(
@@ -283,11 +318,72 @@ def run_evaluation(
                         for f in InvoiceData.model_fields
                     },
                 )
-                method_scores.append(failed_score)
+                combo_scores.append(failed_score)
 
-        results[method] = method_scores
+        results[combo_key] = combo_scores
 
     return results
+
+
+def _has_composite_keys(results: dict[str, list[InvoiceScore]]) -> bool:
+    """Check if results use composite method/model keys."""
+    return any("/" in key for key in results)
+
+
+def _print_matrix(results: dict[str, list[InvoiceScore]]) -> None:
+    """Print a matrix of average scores with models as rows and methods as columns.
+
+    Parameters
+    ----------
+    results : dict[str, list[InvoiceScore]]
+        Evaluation results keyed by composite "method/model" keys.
+    """
+    # Parse composite keys into (method, model) tuples
+    methods: list[str] = []
+    models: list[str] = []
+    scores_map: dict[tuple[str, str], float] = {}
+
+    for key, scores in results.items():
+        if "/" in key:
+            method, model = key.split("/", 1)
+        else:
+            method, model = key, "default"
+
+        if method not in methods:
+            methods.append(method)
+        if model not in models:
+            models.append(model)
+
+        if scores:
+            avg = sum(s.overall_score for s in scores) / len(scores)
+        else:
+            avg = 0.0
+        scores_map[(method, model)] = avg
+
+    # Print matrix
+    print("\n" + "=" * 70)
+    print("EVALUATION MATRIX (avg score)")
+    print("=" * 70)
+
+    # Header
+    model_col_width = max(len(m) for m in models) + 2
+    method_col_width = 18
+    header = f"  {'Model':<{model_col_width}}" + "".join(
+        f"{m:>{method_col_width}}" for m in methods
+    )
+    print(header)
+    print("  " + "-" * (model_col_width + method_col_width * len(methods)))
+
+    # Rows
+    for model in models:
+        row = f"  {model:<{model_col_width}}"
+        for method in methods:
+            score = scores_map.get((method, model))
+            if score is not None:
+                row += f"{score:>{method_col_width}.1%}"
+            else:
+                row += f"{'N/A':>{method_col_width}}"
+        print(row)
 
 
 def print_summary(results: dict[str, list[InvoiceScore]]) -> None:
@@ -296,7 +392,7 @@ def print_summary(results: dict[str, list[InvoiceScore]]) -> None:
     Parameters
     ----------
     results : dict[str, list[InvoiceScore]]
-        Evaluation results keyed by method.
+        Evaluation results keyed by method or composite "method/model" key.
     """
     print("\n" + "=" * 70)
     print("EVALUATION SUMMARY")
@@ -337,6 +433,10 @@ def print_summary(results: dict[str, list[InvoiceScore]]) -> None:
         for score in scores:
             status = "PASS" if score.overall_score >= 0.85 else "FAIL"
             print(f"    [{status}] {score.invoice_file}: {score.overall_score:.1%}")
+
+    # Print matrix when composite keys are present
+    if _has_composite_keys(results):
+        _print_matrix(results)
 
     # Method comparison when 2+ methods
     methods_with_scores = {m: s for m, s in results.items() if s}
@@ -417,6 +517,8 @@ __all__ = [
     "load_ground_truth",
     "run_evaluation",
     "print_summary",
+    "_is_valid_combo",
+    "_print_matrix",
     "FIELD_MATCHERS",
 ]
 
@@ -434,11 +536,18 @@ if __name__ == "__main__":
         "--methods",
         nargs="+",
         default=["structured_outputs", "baml"],
-        choices=["structured_outputs", "baml"],
         help="Extraction methods to evaluate",
+    )
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        default=["gemma3:27b"],
+        help="Models to evaluate (e.g., gemma3:27b qwen2.5:14b)",
     )
     args = parser.parse_args()
 
     settings = Settings(_cli_parse_args=False)
-    results = run_evaluation(args.ground_truth, args.methods, settings)
+    results = run_evaluation(
+        args.ground_truth, args.methods, settings, models=args.models
+    )
     print_summary(results)
