@@ -24,7 +24,6 @@ from invoice_tracker.extractor import (
 from invoice_tracker.settings import (
     ExtractionError,
     InvoiceData,
-    OllamaBackend,
     Settings,
 )
 
@@ -107,7 +106,7 @@ class TestCheckOllamaConnection:
         """Cloud backend should skip model listing and return True."""
         settings = Settings(
             _cli_parse_args=False,
-            ollama_backend=OllamaBackend.CLOUD,
+            ollama_model="qwen3:8b-cloud",
             ollama_api_key="test-key",
         )
         with patch("invoice_tracker.extractor.ollama.Client"):
@@ -122,7 +121,7 @@ class TestCreateClient:
         """Cloud backend should include Authorization header."""
         settings = Settings(
             _cli_parse_args=False,
-            ollama_backend=OllamaBackend.CLOUD,
+            ollama_model="qwen3:8b-cloud",
             ollama_api_key="test-api-key",
         )
         with patch("invoice_tracker.extractor.ollama.Client") as mock_client:

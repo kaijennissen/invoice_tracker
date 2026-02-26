@@ -272,15 +272,18 @@ class BamlExtractor:
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
         model = settings.ollama_model
+        options: dict = {
+            "base_url": f"{settings.ollama_url}/v1",
+            "model": model,
+            "default_role": "user",
+        }
+        if settings.ollama_backend.requires_api_key and settings.ollama_api_key:
+            options["api_key"] = settings.ollama_api_key.get_secret_value()
         cr = baml_py.baml_py.ClientRegistry()
         cr.add_llm_client(
             name="DynamicClient",
             provider="openai-generic",
-            options={
-                "base_url": "http://localhost:11434/v1",
-                "model": model,
-                "default_role": "user",
-            },
+            options=options,
         )
         cr.set_primary("DynamicClient")
         self._client_registry = cr

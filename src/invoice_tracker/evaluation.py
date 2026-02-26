@@ -278,9 +278,7 @@ def run_evaluation(
             continue
 
         combo_key = f"{method}/{model}"
-        eval_settings = settings.model_copy(
-            update={"use_baml": method == "baml", "ollama_model": model}
-        )
+        eval_settings = settings.for_model(model, use_baml=(method == "baml"))
         combo_scores: list[InvoiceScore] = []
 
         for entry in ground_truth:
