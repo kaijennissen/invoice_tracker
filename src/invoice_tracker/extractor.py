@@ -219,20 +219,30 @@ class OllamaExtractor:
         ExtractionError
             If the response is empty.
         """
-        response = self._client.chat(
-            model=self._settings.ollama_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": EXTRACTION_PROMPT,
-                    "images": images,
-                }
-            ],
-            format=InvoiceData.model_json_schema(),
-            options={"temperature": 0},
-        )
+        if self._settings.ollama_api_mode == "generate":
+            response = self._client.generate(
+                model=self._settings.ollama_model,
+                prompt=EXTRACTION_PROMPT,
+                images=images,
+                format=InvoiceData.model_json_schema(),
+                options={"temperature": 0},
+            )
+            content = response.response
+        else:
+            chat_response = self._client.chat(
+                model=self._settings.ollama_model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": EXTRACTION_PROMPT,
+                        "images": images,
+                    }
+                ],
+                format=InvoiceData.model_json_schema(),
+                options={"temperature": 0},
+            )
+            content = chat_response.message.content
 
-        content = response.message.content
         if content is None:
             raise ExtractionError("Empty response from Ollama")
 

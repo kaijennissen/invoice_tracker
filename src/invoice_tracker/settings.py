@@ -140,6 +140,10 @@ class Settings(BaseSettings):
         default=120,
         description="API timeout in seconds",
     )
+    ollama_api_mode: str = Field(
+        default="chat",
+        description="Ollama API mode: 'chat' for /api/chat, 'generate' for /api/generate (required by some models like glm-ocr)",
+    )
 
     # BAML settings
     use_baml: bool = Field(
