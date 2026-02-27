@@ -9,7 +9,7 @@ Settings can be configured via:
 """
 
 from datetime import date, datetime
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
@@ -29,7 +29,25 @@ CURRENCY_MAP: dict[str, str] = {
 }
 
 
-class OllamaBackend(str, Enum):
+class ExtractionMethod(StrEnum):
+    """Invoice extraction method selection.
+
+    Attributes
+    ----------
+    OLLAMA : str
+        Direct Ollama API with structured output (server-side JSON schema).
+    BAML : str
+        BAML client with prompt-engineering approach.
+    OUTLINES : str
+        Outlines with Transformers backend (client-side logit-level structured generation).
+    """
+
+    OLLAMA = "ollama"
+    BAML = "baml"
+    OUTLINES = "outlines"
+
+
+class OllamaBackend(StrEnum):
     """Ollama backend selection with baked-in configuration.
 
     Each backend has an associated base URL and authentication requirements.
@@ -141,10 +159,20 @@ class Settings(BaseSettings):
         description="API timeout in seconds",
     )
 
-    # BAML settings
-    use_baml: bool = Field(
-        default=False,
-        description="Use BAML client for extraction instead of direct Ollama client",
+    # Extraction method
+    extraction_method: ExtractionMethod = Field(
+        default=ExtractionMethod.OLLAMA,
+        description="Extraction method: 'ollama', 'baml', or 'outlines'",
+    )
+
+    # Outlines settings
+    outlines_model: str = Field(
+        default="google/gemma-3-27b-it",
+        description="HuggingFace model ID for Outlines extraction",
+    )
+    huggingface_token: SecretStr | None = Field(
+        default=None,
+        description="HuggingFace API token for private/gated models",
     )
 
     @property
@@ -310,6 +338,7 @@ class ExtractionError(Exception):
 
 __all__ = [
     "CURRENCY_MAP",
+    "ExtractionMethod",
     "OllamaBackend",
     "Settings",
     "InvoiceData",
