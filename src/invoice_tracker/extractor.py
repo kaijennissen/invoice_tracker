@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 import baml_py
+import baml_py.baml_py
 import fitz
 import ollama
 import structlog
@@ -29,6 +30,7 @@ from invoice_tracker.settings import (
     InvoiceData,
     OllamaBackend,
     Settings,
+    is_valid_extraction_config,
 )
 
 log = structlog.get_logger()
@@ -155,11 +157,16 @@ def _convert_baml_result(baml_result: baml_types.InvoiceData) -> InvoiceData:
     InvoiceData
         Application invoice data with date objects.
     """
+    due_date = (
+        date.fromisoformat(baml_result.due_date)
+        if baml_result.due_date
+        else date.fromisoformat(baml_result.issue_date)
+    )
     return InvoiceData(
         party=baml_result.party,
         invoice_id=baml_result.invoice_id,
         issue_date=date.fromisoformat(baml_result.issue_date),
-        due_date=date.fromisoformat(baml_result.due_date),
+        due_date=due_date,
         amount=baml_result.amount,
         currency=baml_result.currency,
         recipient=baml_result.recipient,
@@ -270,6 +277,22 @@ class BamlExtractor:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
+        model = settings.ollama_model
+        options: dict = {
+            "base_url": f"{settings.ollama_url}/v1",
+            "model": model,
+            "default_role": "user",
+        }
+        if settings.ollama_backend.requires_api_key and settings.ollama_api_key:
+            options["api_key"] = settings.ollama_api_key.get_secret_value()
+        cr = baml_py.baml_py.ClientRegistry()
+        cr.add_llm_client(
+            name="DynamicClient",
+            provider="openai-generic",
+            options=options,
+        )
+        cr.set_primary("DynamicClient")
+        self._client_registry = cr
 
     def extract(self, images: list[bytes]) -> InvoiceData:
         """Extract invoice data from images via BAML.
@@ -297,7 +320,10 @@ class BamlExtractor:
         )
 
         try:
-            result = b.ExtractInvoiceData(images=baml_images)
+            result = b.ExtractInvoiceData(
+                images=baml_images,
+                baml_options={"client_registry": self._client_registry},
+            )
         except Exception as e:
             raise ExtractionError(f"BAML extraction failed: {e}") from e
 
@@ -335,6 +361,12 @@ def create_extractor(settings: Settings) -> ExtractionStrategy:
     ExtractionStrategy
         An extractor instance (BAML or Ollama based on settings.use_baml).
     """
+    if not is_valid_extraction_config(settings.ollama_backend, settings.use_baml):
+        log.warning(
+            "cloud_structured_outputs_unsupported",
+            model=settings.ollama_model,
+            hint="Ollama cloud does not support structured output; use --use-baml for reliable extraction",
+        )
     if settings.use_baml:
         return BamlExtractor(settings)
     return OllamaExtractor(settings)
@@ -415,6 +447,4 @@ __all__ = [
     "extract_invoice",
     "pdf_to_images",
     "EXTRACTION_PROMPT",
-    "_convert_baml_result",
-    "_bytes_to_baml_image",
 ]

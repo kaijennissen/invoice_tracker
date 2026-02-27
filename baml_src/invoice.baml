@@ -1,10 +1,10 @@
 // Defining a data model.
 class InvoiceData {
   party string
-  invoice_id string 
+  invoice_id string
   issue_date string @description("ISO 8601 date format e.g., 2023-10-15")
-  due_date string @description("ISO 8601 date format e.g., 2023-10-15")
-  amount float 
+  due_date string? @description("ISO 8601 date format e.g., 2023-10-15")
+  amount float
   currency string
   recipient string
 }

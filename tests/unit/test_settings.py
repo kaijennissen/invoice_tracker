@@ -12,6 +12,7 @@ from invoice_tracker.settings import (
     OllamaBackend,
     ProcessingResult,
     Settings,
+    is_valid_extraction_config,
 )
 
 
@@ -163,7 +164,7 @@ class TestSettings:
         monkeypatch.setenv("INVOICE_OLLAMA_URL_OVERRIDE", "http://custom:11434")
         monkeypatch.setenv("INVOICE_INCOMING_DIR", "/custom/incoming")
 
-        settings = Settings(_cli_parse_args=False)
+        settings = Settings(_cli_parse_args=False, process=None, eval=None)
 
         assert settings.ollama_model == "llava"
         assert settings.ollama_url == "http://custom:11434"  # Via override
@@ -189,29 +190,179 @@ class TestExtractionError:
         assert issubclass(ExtractionError, Exception)
 
 
-class TestSettingsOllamaValidation:
-    """Tests for Ollama configuration validation."""
+class TestOllamaBackendFromModel:
+    """Tests for OllamaBackend.from_model() auto-detection."""
 
-    def test_cloud_backend_without_api_key_raises_error(self) -> None:
-        """Cloud backend without API key should raise ValueError."""
-        with pytest.raises(ValueError, match="ollama_api_key is required"):
-            Settings(_cli_parse_args=False, ollama_backend=OllamaBackend.CLOUD)
+    def test_cloud_suffix_returns_cloud(self) -> None:
+        """Model ending with '-cloud' should return CLOUD backend."""
+        assert OllamaBackend.from_model("qwen3-coder:480b-cloud") == OllamaBackend.CLOUD
 
-    def test_cloud_backend_with_api_key_succeeds(self) -> None:
-        """Cloud backend with API key should work and derive correct URL."""
+    def test_cloud_suffix_simple_tag(self) -> None:
+        """Simple tag with '-cloud' suffix should return CLOUD."""
+        assert OllamaBackend.from_model("qwen3:8b-cloud") == OllamaBackend.CLOUD
+
+    def test_local_model_returns_local(self) -> None:
+        """Model without '-cloud' suffix should return LOCAL backend."""
+        assert OllamaBackend.from_model("gemma3:27b") == OllamaBackend.LOCAL
+
+    def test_local_model_no_tag(self) -> None:
+        """Model without tag should return LOCAL."""
+        assert OllamaBackend.from_model("llava") == OllamaBackend.LOCAL
+
+    def test_cloud_in_name_but_not_suffix(self) -> None:
+        """'-cloud' in model name but not as suffix should return LOCAL."""
+        assert OllamaBackend.from_model("cloud-model:8b") == OllamaBackend.LOCAL
+
+
+class TestOllamaBackendMembers:
+    """Tests for OllamaBackend enum members."""
+
+    def test_has_exactly_two_members(self) -> None:
+        """OllamaBackend should have exactly LOCAL and CLOUD."""
+        assert list(OllamaBackend) == [OllamaBackend.LOCAL, OllamaBackend.CLOUD]
+
+
+class TestIsValidExtractionConfig:
+    """Tests for is_valid_extraction_config function."""
+
+    def test_cloud_without_baml_is_invalid(self) -> None:
+        """Cloud backend without BAML should be invalid."""
+        assert is_valid_extraction_config(OllamaBackend.CLOUD, False) is False
+
+    def test_cloud_with_baml_is_valid(self) -> None:
+        """Cloud backend with BAML should be valid."""
+        assert is_valid_extraction_config(OllamaBackend.CLOUD, True) is True
+
+    def test_local_without_baml_is_valid(self) -> None:
+        """Local backend without BAML should be valid."""
+        assert is_valid_extraction_config(OllamaBackend.LOCAL, False) is True
+
+    def test_local_with_baml_is_valid(self) -> None:
+        """Local backend with BAML should be valid."""
+        assert is_valid_extraction_config(OllamaBackend.LOCAL, True) is True
+
+
+class TestSettingsBackendAutoDetection:
+    """Tests for Settings auto-detecting backend from model string."""
+
+    def test_local_model_derives_local_backend(self) -> None:
+        """Local model should derive LOCAL backend."""
+        settings = Settings(
+            _cli_parse_args=False, process=None, eval=None, ollama_model="gemma3:27b"
+        )
+        assert settings.ollama_backend == OllamaBackend.LOCAL
+        assert settings.ollama_url == "http://localhost:11434"
+
+    def test_cloud_model_derives_cloud_backend(self) -> None:
+        """Cloud model should derive CLOUD backend and URL."""
         settings = Settings(
             _cli_parse_args=False,
-            ollama_backend=OllamaBackend.CLOUD,
+            process=None,
+            eval=None,
+            ollama_model="qwen3:8b-cloud",
             ollama_api_key="test-key",
         )
         assert settings.ollama_backend == OllamaBackend.CLOUD
         assert settings.ollama_url == "https://ollama.com"
 
+
+class TestSettingsForModel:
+    """Tests for Settings.for_model() helper."""
+
+    def test_creates_copy_with_new_model(self) -> None:
+        """for_model() should return a new Settings with the given model."""
+        base = Settings(
+            _cli_parse_args=False, process=None, eval=None, ollama_model="gemma3:27b"
+        )
+        copy = base.for_model("llava:13b")
+        assert copy.ollama_model == "llava:13b"
+        assert base.ollama_model == "gemma3:27b"  # original unchanged
+
+    def test_auto_detects_cloud_backend(self) -> None:
+        """for_model() with cloud model should auto-detect CLOUD backend."""
+        base = Settings(
+            _cli_parse_args=False,
+            process=None,
+            eval=None,
+            ollama_model="gemma3:27b",
+            ollama_api_key="test-key",
+        )
+        copy = base.for_model("qwen3-coder:480b-cloud")
+        assert copy.ollama_backend == OllamaBackend.CLOUD
+        assert copy.ollama_url == "https://ollama.com"
+
+    def test_overrides_use_baml(self) -> None:
+        """for_model() should override use_baml when specified."""
+        base = Settings(_cli_parse_args=False, process=None, eval=None, use_baml=False)
+        copy = base.for_model("gemma3:27b", use_baml=True)
+        assert copy.use_baml is True
+
+    def test_preserves_other_settings(self) -> None:
+        """for_model() should preserve non-overridden settings."""
+        base = Settings(
+            _cli_parse_args=False,
+            process=None,
+            eval=None,
+            ollama_timeout=300,
+            ollama_url_override="http://custom:11434",
+        )
+        copy = base.for_model("llava:13b")
+        assert copy.ollama_timeout == 300
+        assert copy.ollama_url_override == "http://custom:11434"
+
+    def test_cloud_model_without_api_key_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """for_model() with cloud model but no API key should raise."""
+        monkeypatch.delenv("INVOICE_OLLAMA_API_KEY", raising=False)
+        base = Settings(
+            _cli_parse_args=False, process=None, eval=None, ollama_model="gemma3:27b"
+        )
+        with pytest.raises(ValueError, match="ollama_api_key is required"):
+            base.for_model("qwen3:8b-cloud")
+
+
+class TestSettingsOllamaValidation:
+    """Tests for Ollama configuration validation."""
+
+    def test_cloud_model_without_api_key_raises_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cloud model without API key should raise ValueError."""
+        monkeypatch.delenv("INVOICE_OLLAMA_API_KEY", raising=False)
+        with pytest.raises(ValueError, match="ollama_api_key is required"):
+            Settings(
+                _cli_parse_args=False,
+                process=None,
+                eval=None,
+                ollama_model="qwen3:8b-cloud",
+            )
+
+    def test_cloud_model_with_api_key_succeeds(self) -> None:
+        """Cloud model with API key should work and derive correct URL."""
+        settings = Settings(
+            _cli_parse_args=False,
+            process=None,
+            eval=None,
+            ollama_model="deepseek-v3.1:671b-cloud",
+            ollama_api_key="test-key",
+        )
+        assert settings.ollama_backend == OllamaBackend.CLOUD
+        assert settings.ollama_url == "https://ollama.com"
+
+    def test_local_model_without_api_key_succeeds(self) -> None:
+        """Local model without API key should succeed."""
+        settings = Settings(
+            _cli_parse_args=False, process=None, eval=None, ollama_model="gemma3:27b"
+        )
+        assert settings.ollama_backend == OllamaBackend.LOCAL
+
     def test_ollama_url_override_takes_precedence(self) -> None:
         """ollama_url_override should override backend default."""
         settings = Settings(
             _cli_parse_args=False,
-            ollama_backend=OllamaBackend.LOCAL,
+            process=None,
+            eval=None,
             ollama_url_override="http://custom:11434",
         )
         assert settings.ollama_url == "http://custom:11434"

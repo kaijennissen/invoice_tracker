@@ -35,6 +35,87 @@ def _configure_logging(verbose: bool) -> None:
     )
 
 
+def _run_process(settings: Settings) -> int:
+    """Execute the process subcommand.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings with process subcommand populated.
+
+    Returns
+    -------
+    int
+        Exit code.
+    """
+    log = structlog.get_logger()
+
+    log.debug("settings_loaded", dry_run=settings.dry_run, verbose=settings.verbose)
+
+    # Check Ollama connection
+    if not settings.dry_run:
+        if not check_ollama_connection(settings):
+            log.error(
+                "ollama_connection_failed",
+                url=settings.ollama_url,
+                model=settings.ollama_model,
+            )
+            return EXIT_ERROR
+
+    # Process single file or batch
+    file = settings.process.file
+    if file:
+        log.info("processing_single_file", file=str(file))
+        result = process_single(file, settings)
+        results = [result]
+    else:
+        log.info("processing_batch")
+        results = process_batch(settings)
+
+    # Report summary
+    if not results:
+        log.info("no_files_processed")
+        return EXIT_SUCCESS
+
+    success = sum(1 for r in results if r.success)
+    failed = len(results) - success
+
+    log.info("processing_complete", success=success, failed=failed)
+
+    # Return exit code
+    if failed == len(results):
+        return EXIT_ERROR  # All failed
+    elif failed > 0:
+        return EXIT_PARTIAL_FAILURE
+    return EXIT_SUCCESS
+
+
+def _run_eval(settings: Settings) -> int:
+    """Execute the eval subcommand.
+
+    Parameters
+    ----------
+    settings : Settings
+        Application settings with eval subcommand populated.
+
+    Returns
+    -------
+    int
+        Exit code.
+    """
+    from invoice_tracker.evaluation import print_summary, run_evaluation
+
+    eval_cmd = settings.eval
+    results = run_evaluation(
+        eval_cmd.ground_truth,
+        eval_cmd.methods,
+        settings,
+        models=eval_cmd.models,
+    )
+    print_summary(results)
+    return EXIT_SUCCESS
+
+
 def main() -> int:
     """Execute the invoice-tracker CLI.
 
@@ -53,48 +134,19 @@ def main() -> int:
 
     # Configure logging
     _configure_logging(settings.verbose)
-    log = structlog.get_logger()
 
     try:
-        log.debug("settings_loaded", dry_run=settings.dry_run, verbose=settings.verbose)
+        if settings.eval is not None:
+            return _run_eval(settings)
+        if settings.process is not None:
+            return _run_process(settings)
 
-        # Check Ollama connection
-        if not settings.dry_run:
-            if not check_ollama_connection(settings):
-                log.error(
-                    "ollama_connection_failed",
-                    url=settings.ollama_url,
-                    model=settings.ollama_model,
-                )
-                return EXIT_ERROR
-
-        # Process single file or batch
-        if settings.file:
-            log.info("processing_single_file", file=str(settings.file))
-            result = process_single(settings.file, settings)
-            results = [result]
-        else:
-            log.info("processing_batch")
-            results = process_batch(settings)
-
-        # Report summary
-        if not results:
-            log.info("no_files_processed")
-            return EXIT_SUCCESS
-
-        success = sum(1 for r in results if r.success)
-        failed = len(results) - success
-
-        log.info("processing_complete", success=success, failed=failed)
-
-        # Return exit code
-        if failed == len(results):
-            return EXIT_ERROR  # All failed
-        elif failed > 0:
-            return EXIT_PARTIAL_FAILURE
-        return EXIT_SUCCESS
+        # No subcommand — print usage
+        print("Usage: invoice-tracker {process,eval} [options]", file=sys.stderr)
+        return EXIT_ERROR
 
     except Exception as e:
+        log = structlog.get_logger()
         log.exception("unexpected_error", error=str(e))
         return EXIT_ERROR
 

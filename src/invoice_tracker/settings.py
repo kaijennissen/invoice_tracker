@@ -13,7 +13,12 @@ from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, CliPositionalArg, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    CliPositionalArg,
+    CliSubCommand,
+    SettingsConfigDict,
+)
 
 # Currency symbol to ISO code mapping
 CURRENCY_MAP: dict[str, str] = {
@@ -27,6 +32,9 @@ CURRENCY_MAP: dict[str, str] = {
     "GBP": "GBP",
     "JPY": "JPY",
 }
+
+
+_CLOUD_SUFFIX = "-cloud"
 
 
 class OllamaBackend(str, Enum):
@@ -44,6 +52,13 @@ class OllamaBackend(str, Enum):
 
     LOCAL = "local"
     CLOUD = "cloud"
+
+    @classmethod
+    def from_model(cls, model: str) -> "OllamaBackend":
+        """Detect backend from model string. Cloud models end with '-cloud'."""
+        if model.endswith(_CLOUD_SUFFIX):
+            return cls.CLOUD
+        return cls.LOCAL
 
     @property
     def base_url(self) -> str:
@@ -71,6 +86,39 @@ class OllamaBackend(str, Enum):
         return self == OllamaBackend.CLOUD
 
 
+def is_valid_extraction_config(backend: OllamaBackend, use_baml: bool) -> bool:
+    """Whether a backend/method combination can produce reliable results."""
+    if backend == OllamaBackend.CLOUD and not use_baml:
+        return False
+    return True
+
+
+class ProcessCommand(BaseModel):
+    """Arguments for the 'process' subcommand."""
+
+    file: CliPositionalArg[Path | None] = Field(
+        default=None,
+        description="Single invoice file to process (default: process all in incoming/)",
+    )
+
+
+class EvalCommand(BaseModel):
+    """Arguments for the 'eval' subcommand."""
+
+    ground_truth: Path = Field(
+        default=Path("data/evaluation/ground_truth.json"),
+        description="Path to ground truth JSON file",
+    )
+    methods: list[str] = Field(
+        default_factory=lambda: ["structured_outputs", "baml"],
+        description="Extraction methods to evaluate",
+    )
+    models: list[str] = Field(
+        default_factory=lambda: ["gemma3:27b"],
+        description="Models to evaluate",
+    )
+
+
 class Settings(BaseSettings):
     """Invoice tracker configuration.
 
@@ -81,17 +129,18 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         cli_parse_args=True,
+        cli_enforce_required=False,
         cli_prog_name="invoice-tracker",
         cli_kebab_case=True,
         cli_implicit_flags=True,
         env_prefix="INVOICE_",
     )
 
+    # Subcommands
+    process: CliSubCommand[ProcessCommand]
+    eval: CliSubCommand[EvalCommand]
+
     # CLI-only arguments
-    file: CliPositionalArg[Path | None] = Field(
-        default=None,
-        description="Single invoice file to process (default: process all in incoming/)",
-    )
     dry_run: bool = Field(
         default=False,
         description="Extract and validate without persisting or moving files",
@@ -120,10 +169,6 @@ class Settings(BaseSettings):
     )
 
     # Ollama settings
-    ollama_backend: OllamaBackend = Field(
-        default=OllamaBackend.LOCAL,
-        description="Ollama backend: 'local' for local instance, 'cloud' for Ollama cloud",
-    )
     ollama_api_key: SecretStr | None = Field(
         default=None,
         description="API key for Ollama cloud (required when backend=cloud)",
@@ -148,6 +193,11 @@ class Settings(BaseSettings):
     )
 
     @property
+    def ollama_backend(self) -> OllamaBackend:
+        """Derive backend from model string suffix."""
+        return OllamaBackend.from_model(self.ollama_model)
+
+    @property
     def ollama_url(self) -> str:
         """Get the effective Ollama API URL.
 
@@ -164,7 +214,7 @@ class Settings(BaseSettings):
     def validate_ollama_config(self) -> "Settings":
         """Validate Ollama configuration consistency.
 
-        Ensures API key is provided when using a backend that requires it.
+        Ensures API key is provided when using a cloud model.
 
         Returns
         -------
@@ -174,13 +224,38 @@ class Settings(BaseSettings):
         Raises
         ------
         ValueError
-            If API key is missing for a backend that requires it.
+            If API key is missing for a cloud model.
         """
         if self.ollama_backend.requires_api_key and not self.ollama_api_key:
             raise ValueError(
-                f"ollama_api_key is required when using '{self.ollama_backend.value}' backend"
+                f"ollama_api_key is required when using cloud models "
+                f"(model='{self.ollama_model}')"
             )
         return self
+
+    def for_model(self, model: str, *, use_baml: bool | None = None) -> "Settings":
+        """Create a validated copy configured for a specific model.
+
+        Parameters
+        ----------
+        model : str
+            The model string to configure for.
+        use_baml : bool | None
+            Override the use_baml setting, or None to keep current.
+
+        Returns
+        -------
+        Settings
+            A new validated Settings instance for the given model.
+        """
+        updates: dict = {"ollama_model": model}
+        if use_baml is not None:
+            updates["use_baml"] = use_baml
+        data = self.model_dump()
+        if self.ollama_api_key:
+            data["ollama_api_key"] = self.ollama_api_key.get_secret_value()
+        data.update(updates)
+        return Settings(_cli_parse_args=False, **data)
 
     # Processing settings
     supported_extensions: list[str] = Field(
@@ -311,6 +386,9 @@ class ExtractionError(Exception):
 __all__ = [
     "CURRENCY_MAP",
     "OllamaBackend",
+    "is_valid_extraction_config",
+    "ProcessCommand",
+    "EvalCommand",
     "Settings",
     "InvoiceData",
     "InvoiceRecord",
