@@ -48,7 +48,7 @@ class InvoiceData(BaseModel):
     party: str
     invoice_id: str
     issue_date: str
-    due_date: str
+    due_date: typing.Optional[str] = None
     amount: float
     currency: str
     recipient: str

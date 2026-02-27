@@ -157,11 +157,16 @@ def _convert_baml_result(baml_result: baml_types.InvoiceData) -> InvoiceData:
     InvoiceData
         Application invoice data with date objects.
     """
+    due_date = (
+        date.fromisoformat(baml_result.due_date)
+        if baml_result.due_date
+        else date.fromisoformat(baml_result.issue_date)
+    )
     return InvoiceData(
         party=baml_result.party,
         invoice_id=baml_result.invoice_id,
         issue_date=date.fromisoformat(baml_result.issue_date),
-        due_date=date.fromisoformat(baml_result.due_date),
+        due_date=due_date,
         amount=baml_result.amount,
         currency=baml_result.currency,
         recipient=baml_result.recipient,
