@@ -51,6 +51,8 @@ def processor_settings(tmp_path: Path) -> Settings:
         processed_dir=processed,
         failed_dir=failed,
         excel_file=excel_file,
+        process=None,
+        eval=None,
     )
 
 
@@ -62,6 +64,8 @@ class TestScanIncoming:
         settings = Settings(
             _cli_parse_args=False,
             incoming_dir=tmp_path / "nonexistent",
+            process=None,
+            eval=None,
         )
 
         result = scan_incoming(settings)

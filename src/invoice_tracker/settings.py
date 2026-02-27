@@ -13,7 +13,12 @@ from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, CliPositionalArg, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    CliPositionalArg,
+    CliSubCommand,
+    SettingsConfigDict,
+)
 
 # Currency symbol to ISO code mapping
 CURRENCY_MAP: dict[str, str] = {
@@ -27,6 +32,9 @@ CURRENCY_MAP: dict[str, str] = {
     "GBP": "GBP",
     "JPY": "JPY",
 }
+
+
+_CLOUD_SUFFIX = "-cloud"
 
 
 class OllamaBackend(str, Enum):
@@ -45,12 +53,10 @@ class OllamaBackend(str, Enum):
     LOCAL = "local"
     CLOUD = "cloud"
 
-    CLOUD_SUFFIX = "-cloud"
-
     @classmethod
     def from_model(cls, model: str) -> "OllamaBackend":
         """Detect backend from model string. Cloud models end with '-cloud'."""
-        if model.endswith(cls.CLOUD_SUFFIX):
+        if model.endswith(_CLOUD_SUFFIX):
             return cls.CLOUD
         return cls.LOCAL
 
@@ -80,6 +86,39 @@ class OllamaBackend(str, Enum):
         return self == OllamaBackend.CLOUD
 
 
+def is_valid_extraction_config(backend: OllamaBackend, use_baml: bool) -> bool:
+    """Whether a backend/method combination can produce reliable results."""
+    if backend == OllamaBackend.CLOUD and not use_baml:
+        return False
+    return True
+
+
+class ProcessCommand(BaseModel):
+    """Arguments for the 'process' subcommand."""
+
+    file: CliPositionalArg[Path | None] = Field(
+        default=None,
+        description="Single invoice file to process (default: process all in incoming/)",
+    )
+
+
+class EvalCommand(BaseModel):
+    """Arguments for the 'eval' subcommand."""
+
+    ground_truth: Path = Field(
+        default=Path("data/evaluation/ground_truth.json"),
+        description="Path to ground truth JSON file",
+    )
+    methods: list[str] = Field(
+        default_factory=lambda: ["structured_outputs", "baml"],
+        description="Extraction methods to evaluate",
+    )
+    models: list[str] = Field(
+        default_factory=lambda: ["gemma3:27b"],
+        description="Models to evaluate",
+    )
+
+
 class Settings(BaseSettings):
     """Invoice tracker configuration.
 
@@ -90,17 +129,18 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         cli_parse_args=True,
+        cli_enforce_required=False,
         cli_prog_name="invoice-tracker",
         cli_kebab_case=True,
         cli_implicit_flags=True,
         env_prefix="INVOICE_",
     )
 
+    # Subcommands
+    process: CliSubCommand[ProcessCommand]
+    eval: CliSubCommand[EvalCommand]
+
     # CLI-only arguments
-    file: CliPositionalArg[Path | None] = Field(
-        default=None,
-        description="Single invoice file to process (default: process all in incoming/)",
-    )
     dry_run: bool = Field(
         default=False,
         description="Extract and validate without persisting or moving files",
@@ -346,6 +386,9 @@ class ExtractionError(Exception):
 __all__ = [
     "CURRENCY_MAP",
     "OllamaBackend",
+    "is_valid_extraction_config",
+    "ProcessCommand",
+    "EvalCommand",
     "Settings",
     "InvoiceData",
     "InvoiceRecord",

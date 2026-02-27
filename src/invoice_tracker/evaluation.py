@@ -14,7 +14,12 @@ import structlog
 from rapidfuzz import fuzz
 
 from invoice_tracker.extractor import extract_invoice
-from invoice_tracker.settings import InvoiceData, Settings
+from invoice_tracker.settings import (
+    InvoiceData,
+    OllamaBackend,
+    Settings,
+    is_valid_extraction_config,
+)
 
 log = structlog.get_logger()
 
@@ -221,23 +226,22 @@ def load_ground_truth(ground_truth_path: Path) -> list[dict]:
         return json.load(f)
 
 
-def _is_valid_combo(method: str, model: str) -> bool:
-    """Check whether a method/model combination is valid.
+def _is_valid_combo(method: str, backend: OllamaBackend) -> bool:
+    """Check whether a method/backend combination is valid.
 
     Parameters
     ----------
     method : str
         Extraction method name.
-    model : str
-        Model identifier.
+    backend : OllamaBackend
+        The backend to check against.
 
     Returns
     -------
     bool
         True if the combination can be evaluated.
     """
-    # All local Ollama models work with both methods
-    return True
+    return is_valid_extraction_config(backend, use_baml=(method == "baml"))
 
 
 def run_evaluation(
@@ -273,7 +277,8 @@ def run_evaluation(
     results: dict[str, list[InvoiceScore]] = {}
 
     for method, model in itertools.product(methods, models):
-        if not _is_valid_combo(method, model):
+        backend = OllamaBackend.from_model(model)
+        if not _is_valid_combo(method, backend):
             log.info("skipping_invalid_combo", method=method, model=model)
             continue
 
@@ -567,37 +572,5 @@ __all__ = [
     "load_ground_truth",
     "run_evaluation",
     "print_summary",
-    "_is_valid_combo",
-    "_print_matrix",
     "FIELD_MATCHERS",
 ]
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Evaluate invoice extraction methods")
-    parser.add_argument(
-        "--ground-truth",
-        type=Path,
-        default=Path("data/evaluation/ground_truth.json"),
-        help="Path to ground truth JSON file",
-    )
-    parser.add_argument(
-        "--methods",
-        nargs="+",
-        default=["structured_outputs", "baml"],
-        help="Extraction methods to evaluate",
-    )
-    parser.add_argument(
-        "--models",
-        nargs="+",
-        default=["gemma3:27b"],
-        help="Models to evaluate (e.g., gemma3:27b qwen2.5:14b)",
-    )
-    args = parser.parse_args()
-
-    settings = Settings(_cli_parse_args=False)
-    results = run_evaluation(
-        args.ground_truth, args.methods, settings, models=args.models
-    )
-    print_summary(results)

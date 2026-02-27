@@ -30,6 +30,7 @@ from invoice_tracker.settings import (
     InvoiceData,
     OllamaBackend,
     Settings,
+    is_valid_extraction_config,
 )
 
 log = structlog.get_logger()
@@ -355,6 +356,12 @@ def create_extractor(settings: Settings) -> ExtractionStrategy:
     ExtractionStrategy
         An extractor instance (BAML or Ollama based on settings.use_baml).
     """
+    if not is_valid_extraction_config(settings.ollama_backend, settings.use_baml):
+        log.warning(
+            "cloud_structured_outputs_unsupported",
+            model=settings.ollama_model,
+            hint="Ollama cloud does not support structured output; use --use-baml for reliable extraction",
+        )
     if settings.use_baml:
         return BamlExtractor(settings)
     return OllamaExtractor(settings)
@@ -435,6 +442,4 @@ __all__ = [
     "extract_invoice",
     "pdf_to_images",
     "EXTRACTION_PROMPT",
-    "_convert_baml_result",
-    "_bytes_to_baml_image",
 ]

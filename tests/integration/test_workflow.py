@@ -45,6 +45,8 @@ def integration_settings(tmp_path: Path) -> Settings:
         processed_dir=processed,
         failed_dir=failed,
         excel_file=excel_file,
+        process=None,
+        eval=None,
     )
 
 

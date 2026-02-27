@@ -37,7 +37,7 @@ def mock_settings() -> Settings:
     Settings
         Settings instance configured for testing.
     """
-    return Settings(_cli_parse_args=False)
+    return Settings(_cli_parse_args=False, process=None, eval=None)
 
 
 @pytest.fixture
@@ -108,6 +108,8 @@ class TestCheckOllamaConnection:
             _cli_parse_args=False,
             ollama_model="qwen3:8b-cloud",
             ollama_api_key="test-key",
+            process=None,
+            eval=None,
         )
         with patch("invoice_tracker.extractor.ollama.Client"):
             result = check_ollama_connection(settings)
@@ -123,6 +125,8 @@ class TestCreateClient:
             _cli_parse_args=False,
             ollama_model="qwen3:8b-cloud",
             ollama_api_key="test-api-key",
+            process=None,
+            eval=None,
         )
         with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
             _create_client(settings)
@@ -134,7 +138,7 @@ class TestCreateClient:
 
     def test_local_backend_no_auth_headers(self) -> None:
         """Local backend should not include Authorization header."""
-        settings = Settings(_cli_parse_args=False)
+        settings = Settings(_cli_parse_args=False, process=None, eval=None)
         with patch("invoice_tracker.extractor.ollama.Client") as mock_client:
             _create_client(settings)
             mock_client.assert_called_once_with(
@@ -511,7 +515,7 @@ class TestBamlExtractor:
         Settings
             Settings instance with use_baml=True.
         """
-        return Settings(_cli_parse_args=False, use_baml=True)
+        return Settings(_cli_parse_args=False, use_baml=True, process=None, eval=None)
 
     def test_extract_success(self, baml_settings: Settings) -> None:
         """BamlExtractor.extract returns InvoiceData on success."""
@@ -567,9 +571,27 @@ class TestCreateExtractor:
 
     def test_returns_baml_extractor_when_enabled(self) -> None:
         """create_extractor returns BamlExtractor when use_baml is True."""
-        settings = Settings(_cli_parse_args=False, use_baml=True)
+        settings = Settings(
+            _cli_parse_args=False, use_baml=True, process=None, eval=None
+        )
         extractor = create_extractor(settings)
         assert isinstance(extractor, BamlExtractor)
+
+    def test_warns_cloud_without_baml(self, capsys: pytest.CaptureFixture[str]) -> None:
+        """create_extractor warns when cloud model used without BAML."""
+        settings = Settings(
+            _cli_parse_args=False,
+            ollama_model="qwen3:8b-cloud",
+            ollama_api_key="test-key",
+            use_baml=False,
+            process=None,
+            eval=None,
+        )
+        with patch("invoice_tracker.extractor.ollama.Client"):
+            create_extractor(settings)
+
+        captured = capsys.readouterr()
+        assert "cloud_structured_outputs_unsupported" in captured.out
 
 
 class TestConvertBamlResult:
@@ -652,7 +674,7 @@ class TestExtractInvoiceBaml:
         Settings
             Settings instance with use_baml=True.
         """
-        return Settings(_cli_parse_args=False, use_baml=True)
+        return Settings(_cli_parse_args=False, use_baml=True, process=None, eval=None)
 
     def test_uses_baml_when_enabled(
         self, baml_settings: Settings, tmp_path: Path

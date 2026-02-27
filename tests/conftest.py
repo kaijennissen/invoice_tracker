@@ -90,4 +90,4 @@ def test_settings() -> Settings:
     Settings
         Settings instance configured for testing.
     """
-    return Settings(_cli_parse_args=False)
+    return Settings(_cli_parse_args=False, process=None, eval=None)

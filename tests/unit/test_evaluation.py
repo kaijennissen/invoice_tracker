@@ -17,7 +17,7 @@ from invoice_tracker.evaluation import (
     run_evaluation,
     score_invoice,
 )
-from invoice_tracker.settings import InvoiceData, Settings
+from invoice_tracker.settings import InvoiceData, OllamaBackend, Settings
 
 
 class TestMatchExact:
@@ -294,14 +294,18 @@ class TestMatchResultDataclass:
 class TestIsValidCombo:
     """Tests for _is_valid_combo helper."""
 
-    def test_baml_with_local_model(self):
-        assert _is_valid_combo("baml", "gemma3:27b") is True
+    def test_baml_with_local_backend(self):
+        assert _is_valid_combo("baml", OllamaBackend.LOCAL) is True
 
-    def test_structured_outputs_with_local_model(self):
-        assert _is_valid_combo("structured_outputs", "qwen2.5:14b") is True
+    def test_structured_outputs_with_local_backend(self):
+        assert _is_valid_combo("structured_outputs", OllamaBackend.LOCAL) is True
 
-    def test_baml_with_any_model(self):
-        assert _is_valid_combo("baml", "llama3:8b") is True
+    def test_baml_with_cloud_backend(self):
+        assert _is_valid_combo("baml", OllamaBackend.CLOUD) is True
+
+    def test_rejects_structured_outputs_cloud(self):
+        """structured_outputs + cloud backend should be rejected."""
+        assert _is_valid_combo("structured_outputs", OllamaBackend.CLOUD) is False
 
 
 class TestRunEvaluationCompositeKeys:
@@ -332,7 +336,7 @@ class TestRunEvaluationCompositeKeys:
 
     @pytest.fixture
     def settings(self) -> Settings:
-        return Settings(_cli_parse_args=False)
+        return Settings(_cli_parse_args=False, process=None, eval=None)
 
     def _fake_extract(self, file_path, settings):
         return InvoiceData(
